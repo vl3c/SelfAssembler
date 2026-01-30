@@ -1,0 +1,158 @@
+# Claudonomous Configuration
+# Copy this file to claudonomous.yaml and customize as needed
+
+# Budget limit in USD for the entire workflow
+budget_limit_usd: 15.0
+
+# Plans directory (relative to repo root)
+plans_dir: "./plans"
+
+# Claude CLI settings
+claude:
+  default_timeout: 600  # seconds
+  max_turns_default: 50
+
+# Git settings
+git:
+  base_branch: "main"
+  worktree_dir: "../.worktrees"
+  branch_prefix: "feature/"
+  cleanup_on_fail: true
+  cleanup_remote_on_fail: false
+
+# Language-agnostic command overrides
+# Set to null to auto-detect, or specify a command
+commands:
+  lint: null       # e.g., "npm run lint" or "ruff check ."
+  typecheck: null  # e.g., "npx tsc --noEmit" or "mypy ."
+  test: null       # e.g., "npm test" or "pytest"
+  build: null      # e.g., "npm run build" or "python -m build"
+
+# Phase-specific settings
+phases:
+  preflight:
+    timeout: 60
+    enabled: true
+
+  setup:
+    timeout: 120
+    enabled: true
+
+  research:
+    timeout: 300
+    max_turns: 25
+    estimated_cost: 0.5
+    enabled: true
+
+  planning:
+    timeout: 600
+    max_turns: 20
+    estimated_cost: 1.0
+    enabled: true
+
+  implementation:
+    timeout: 3600
+    max_turns: 100
+    estimated_cost: 3.0
+    enabled: true
+
+  test_writing:
+    timeout: 1200
+    max_turns: 50
+    estimated_cost: 1.5
+    enabled: true
+
+  test_execution:
+    timeout: 1800
+    max_turns: 60
+    max_iterations: 5  # Max fix-and-retry loops
+    estimated_cost: 2.0
+    enabled: true
+
+  code_review:
+    timeout: 600
+    max_turns: 30
+    estimated_cost: 1.0
+    enabled: true
+
+  fix_review_issues:
+    timeout: 900
+    max_turns: 40
+    estimated_cost: 1.0
+    enabled: true
+
+  lint_check:
+    timeout: 300
+    max_turns: 20
+    estimated_cost: 0.5
+    enabled: true
+
+  documentation:
+    timeout: 600
+    max_turns: 30
+    estimated_cost: 0.5
+    enabled: true
+
+  final_verification:
+    timeout: 300
+    max_turns: 15
+    estimated_cost: 0.5
+    enabled: true
+
+  commit_prep:
+    timeout: 300
+    max_turns: 10
+    estimated_cost: 0.3
+    enabled: true
+
+  conflict_check:
+    timeout: 300
+    max_turns: 20
+    estimated_cost: 0.5
+    enabled: true
+
+  pr_creation:
+    timeout: 300
+    max_turns: 15
+    estimated_cost: 0.3
+    enabled: true
+
+  pr_self_review:
+    timeout: 600
+    max_turns: 20
+    estimated_cost: 0.5
+    enabled: true
+
+# Approval gate settings
+approvals:
+  enabled: true
+  timeout_hours: 24.0
+  gates:
+    planning: true       # Pause after planning for review
+    implementation: false
+    pr_creation: false
+
+# Notification settings
+notifications:
+  console:
+    enabled: true
+    colors: true
+
+  webhook:
+    enabled: false
+    url: null  # e.g., "https://your-webhook.example.com/notify"
+    events:
+      - "workflow_complete"
+      - "workflow_failed"
+      - "approval_needed"
+
+  # Slack notifications (optional)
+  slack:
+    enabled: false
+    webhook_url: null  # Slack incoming webhook URL
+
+# Files to copy to worktree (glob patterns)
+copy_files:
+  - ".env"
+  - ".env.local"
+  - ".claude/*"
