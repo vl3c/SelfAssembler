@@ -33,7 +33,7 @@ class GitConfig(BaseModel):
     base_branch: str = Field(default="main")
     worktree_dir: str = Field(default="../.worktrees")
     branch_prefix: str = Field(default="feature/")
-    cleanup_on_fail: bool = Field(default=True)
+    cleanup_on_fail: bool = Field(default=False)  # Preserve worktree for resume
     cleanup_remote_on_fail: bool = Field(default=False)
 
 
@@ -42,7 +42,8 @@ class PhaseConfig(BaseModel):
 
     timeout: int = Field(default=600, ge=60)
     max_turns: int = Field(default=50, ge=1)
-    max_iterations: int = Field(default=5, ge=1)
+    max_iterations: int = Field(default=5, ge=1)  # Iterations within phase (e.g., lint fix loops)
+    max_retries: int = Field(default=0, ge=0)  # Phase-level retries on failure
     estimated_cost: float = Field(default=1.0, ge=0.0)
     enabled: bool = Field(default=True)
 
@@ -79,7 +80,9 @@ class PhasesConfig(BaseModel):
         default_factory=lambda: PhaseConfig(timeout=900, max_turns=40, estimated_cost=1.0)
     )
     lint_check: PhaseConfig = Field(
-        default_factory=lambda: PhaseConfig(timeout=300, max_turns=20, estimated_cost=0.5)
+        default_factory=lambda: PhaseConfig(
+            timeout=300, max_turns=20, estimated_cost=0.5, max_retries=3
+        )
     )
     documentation: PhaseConfig = Field(
         default_factory=lambda: PhaseConfig(timeout=600, max_turns=30, estimated_cost=0.5)

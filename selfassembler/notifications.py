@@ -166,13 +166,25 @@ class Notifier:
         cost_str = f" (${result.cost_usd:.2f})" if result.cost_usd > 0 else ""
         self._send(f"Phase complete: {phase}{cost_str}", level="success")
 
-    def on_phase_failed(self, phase: str, result: "PhaseResult") -> None:
+    def on_phase_failed(
+        self, phase: str, result: "PhaseResult", will_retry: bool = False
+    ) -> None:
         """Notify that a phase failed."""
         error_preview = result.error[:200] if result.error else "Unknown error"
+        retry_msg = " (will retry)" if will_retry else ""
+        level = "warning" if will_retry else "error"
         self._send(
-            f"Phase failed: {phase}\nError: {error_preview}",
-            level="error",
-            data={"phase": phase, "error": result.error},
+            f"Phase failed: {phase}{retry_msg}\nError: {error_preview}",
+            level=level,
+            data={"phase": phase, "error": result.error, "will_retry": will_retry},
+        )
+
+    def on_phase_retry(self, phase: str, attempt: int, max_retries: int) -> None:
+        """Notify that a phase is being retried."""
+        self._send(
+            f"Retrying phase: {phase} (attempt {attempt + 1}/{max_retries + 1})",
+            level="info",
+            data={"phase": phase, "attempt": attempt, "max_retries": max_retries},
         )
 
     def on_approval_needed(self, phase: str, artifacts: dict[str, Any]) -> None:

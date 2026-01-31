@@ -197,6 +197,7 @@ class Orchestrator:
         """Run a single phase with all the orchestration logic."""
         phase_name = phase.name
         phase_config = self.config.get_phase_config(phase_name)
+        max_retries = phase_config.max_retries
 
         # Update current phase and checkpoint
         self.context.current_phase = phase_name
@@ -220,35 +221,50 @@ class Orchestrator:
         # Notify phase start
         self.notifier.on_phase_started(phase_name)
 
-        # Run the phase
-        result = phase.run()
+        # Run the phase with retry logic
+        last_result = None
+        for attempt in range(max_retries + 1):
+            if attempt > 0:
+                self.notifier.on_phase_retry(phase_name, attempt, max_retries)
 
-        # Check for budget warning
-        self.notifier.on_budget_warning(self.context)
+            result = phase.run()
+            last_result = result
 
-        if result.success:
+            # Check for budget warning
+            self.notifier.on_budget_warning(self.context)
+
+            if result.success:
+                break
+
+            # If not the last attempt, log and retry
+            if attempt < max_retries:
+                self.notifier.on_phase_failed(phase_name, result, will_retry=True)
+            else:
+                # Final attempt failed
+                self.notifier.on_phase_failed(phase_name, result, will_retry=False)
+
+        if last_result and last_result.success:
             # Mark phase complete
             self.context.mark_phase_complete(phase_name)
 
             # Store artifacts
-            for key, value in result.artifacts.items():
+            for key, value in last_result.artifacts.items():
                 self.context.set_artifact(f"{phase_name}_{key}", value)
 
-            self.notifier.on_phase_complete(phase_name, result)
+            self.notifier.on_phase_complete(phase_name, last_result)
 
             # Handle approval gate
             if self._needs_approval(phase):
-                self._wait_for_approval(phase_name, result.artifacts)
+                self._wait_for_approval(phase_name, last_result.artifacts)
 
         else:
-            self.notifier.on_phase_failed(phase_name, result)
             raise PhaseFailedError(
                 phase_name,
-                error=result.error,
-                artifacts=result.artifacts,
+                error=last_result.error if last_result else "Phase returned no result",
+                artifacts=last_result.artifacts if last_result else {},
             )
 
-        return result
+        return last_result
 
     def _needs_approval(self, phase: Phase) -> bool:
         """Check if phase requires approval."""
