@@ -303,11 +303,19 @@ notifications:
 ### Setup
 
 ```bash
-# Clone and install with dev dependencies
+# Clone the repository
 git clone https://github.com/selfassembler/selfassembler.git
 cd selfassembler
+
+# Create and activate a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install with dev dependencies
 pip install -e ".[dev]"
 ```
+
+> **Note**: A virtual environment is required on systems with externally-managed Python (Debian 12+, Ubuntu 23.04+, etc.).
 
 ### Running Tests
 
