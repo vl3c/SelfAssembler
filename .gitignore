@@ -153,10 +153,10 @@ Desktop.ini
 plans/
 .worktrees/
 *.worktrees/
-claudonomous.yaml
+selfassembler.yaml
 
 # Keep example config
-!claudonomous.yaml.example
+!selfassembler.yaml.example
 
 # Ruff
 .ruff_cache/
