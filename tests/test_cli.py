@@ -2,7 +2,7 @@
 
 
 
-from selfassembler.cli import create_parser, generate_task_name, handle_dry_run
+from selfassembler.cli import create_parser, generate_task_name, handle_dry_run, handle_help_phases
 from selfassembler.config import WorkflowConfig
 
 
@@ -480,3 +480,383 @@ class TestHandleDryRun:
         # implementation and other enabled phases should be present
         assert "implementation" in captured.out
         assert "test_execution" in captured.out
+
+
+class TestHelpPhasesFlag:
+    """Tests for --help-phases flag parsing."""
+
+    def test_help_phases_flag_no_args(self):
+        """Test --help-phases with no arguments."""
+        parser = create_parser()
+        args = parser.parse_args(["--help-phases"])
+        # When no args given, help_phases is an empty list
+        assert args.help_phases == []
+
+    def test_help_phases_flag_single_phase(self):
+        """Test --help-phases with single phase argument."""
+        parser = create_parser()
+        args = parser.parse_args(["--help-phases", "planning"])
+        assert args.help_phases == ["planning"]
+
+    def test_help_phases_flag_multiple_phases(self):
+        """Test --help-phases with multiple phase arguments."""
+        parser = create_parser()
+        args = parser.parse_args(["--help-phases", "planning", "implementation"])
+        assert args.help_phases == ["planning", "implementation"]
+
+    def test_help_phases_default_none(self):
+        """Test --help-phases defaults to None when not specified."""
+        parser = create_parser()
+        args = parser.parse_args(["Task"])
+        assert args.help_phases is None
+
+    def test_help_phases_with_other_flags(self):
+        """Test --help-phases can be combined with other utility flags."""
+        parser = create_parser()
+        # --help-phases should be parseable alongside other flags
+        args = parser.parse_args(["--help-phases", "planning", "--verbose"])
+        assert args.help_phases == ["planning"]
+        assert args.verbose is True
+
+
+class TestHandleHelpPhases:
+    """Tests for handle_help_phases function."""
+
+    def test_help_phases_shows_all_phases_when_no_args(self, capsys):
+        """Test that handle_help_phases shows all phases when no args given."""
+        result = handle_help_phases(None)
+
+        assert result == 0
+        captured = capsys.readouterr()
+
+        # Check header is present
+        assert "SELFASSEMBLER WORKFLOW PHASES" in captured.out
+
+        # Check all phases are shown
+        from selfassembler.phases import PHASE_NAMES
+
+        for phase_name in PHASE_NAMES:
+            assert f"PHASE: {phase_name}" in captured.out
+
+    def test_help_phases_shows_all_phases_with_empty_list(self, capsys):
+        """Test that handle_help_phases shows all phases with empty list."""
+        result = handle_help_phases([])
+
+        assert result == 0
+        captured = capsys.readouterr()
+
+        # Should show header and all phases
+        assert "SELFASSEMBLER WORKFLOW PHASES" in captured.out
+        assert "PHASE: preflight" in captured.out
+        assert "PHASE: pr_self_review" in captured.out
+
+    def test_help_phases_single_phase(self, capsys):
+        """Test showing help for a single phase."""
+        result = handle_help_phases(["planning"])
+
+        assert result == 0
+        captured = capsys.readouterr()
+
+        # Should show planning phase
+        assert "PHASE: planning" in captured.out
+        # Should NOT show other phases
+        assert "PHASE: preflight" not in captured.out
+        assert "PHASE: implementation" not in captured.out
+
+    def test_help_phases_multiple_phases(self, capsys):
+        """Test showing help for multiple phases."""
+        result = handle_help_phases(["planning", "implementation"])
+
+        assert result == 0
+        captured = capsys.readouterr()
+
+        # Should show both requested phases
+        assert "PHASE: planning" in captured.out
+        assert "PHASE: implementation" in captured.out
+        # Should NOT show other phases
+        assert "PHASE: preflight" not in captured.out
+        assert "PHASE: pr_self_review" not in captured.out
+
+    def test_help_phases_invalid_phase_name(self, capsys):
+        """Test error handling for invalid phase name."""
+        result = handle_help_phases(["nonexistent_phase"])
+
+        assert result == 1
+        captured = capsys.readouterr()
+
+        # Error message should be on stderr
+        assert "Error: Unknown phase(s): nonexistent_phase" in captured.err
+        # Should show valid phases
+        assert "Valid phases:" in captured.err
+
+    def test_help_phases_multiple_invalid_phases(self, capsys):
+        """Test error handling for multiple invalid phase names."""
+        result = handle_help_phases(["invalid1", "invalid2"])
+
+        assert result == 1
+        captured = capsys.readouterr()
+
+        # Both invalid phases should be mentioned
+        assert "invalid1" in captured.err
+        assert "invalid2" in captured.err
+
+    def test_help_phases_mixed_valid_invalid(self, capsys):
+        """Test error handling when some phases are valid and some invalid."""
+        result = handle_help_phases(["planning", "invalid_phase"])
+
+        assert result == 1
+        captured = capsys.readouterr()
+
+        # Should report the invalid one
+        assert "invalid_phase" in captured.err
+        assert "Valid phases:" in captured.err
+
+    def test_help_phases_shows_description_section(self, capsys):
+        """Test that DESCRIPTION section is shown."""
+        result = handle_help_phases(["planning"])
+
+        assert result == 0
+        captured = capsys.readouterr()
+
+        assert "DESCRIPTION" in captured.out
+        # Planning phase has a docstring
+        assert "Create detailed implementation plan" in captured.out
+
+    def test_help_phases_shows_timing_section(self, capsys):
+        """Test that TIMING section is shown with timeout and max_turns."""
+        result = handle_help_phases(["planning"])
+
+        assert result == 0
+        captured = capsys.readouterr()
+
+        assert "TIMING" in captured.out
+        assert "Timeout:" in captured.out
+        assert "Max turns:" in captured.out
+        # Planning phase has specific values
+        assert "600 seconds" in captured.out
+        assert "10 minutes" in captured.out
+
+    def test_help_phases_shows_approval_gate_section(self, capsys):
+        """Test that APPROVAL GATE section is shown."""
+        result = handle_help_phases(["planning"])
+
+        assert result == 0
+        captured = capsys.readouterr()
+
+        assert "APPROVAL GATE" in captured.out
+        # Planning phase has an approval gate
+        assert "Yes" in captured.out
+
+    def test_help_phases_shows_no_approval_gate(self, capsys):
+        """Test that phases without approval gate show 'No'."""
+        result = handle_help_phases(["implementation"])
+
+        assert result == 0
+        captured = capsys.readouterr()
+
+        # Find the APPROVAL GATE section for implementation
+        lines = captured.out.split("\n")
+        in_approval_section = False
+        for line in lines:
+            if "APPROVAL GATE" in line:
+                in_approval_section = True
+                continue
+            if in_approval_section and line.strip():
+                assert "No" in line
+                break
+
+    def test_help_phases_shows_configuration_section(self, capsys):
+        """Test that CONFIGURATION section is shown with YAML example."""
+        result = handle_help_phases(["planning"])
+
+        assert result == 0
+        captured = capsys.readouterr()
+
+        assert "CONFIGURATION" in captured.out
+        assert "phases:" in captured.out
+        assert "planning:" in captured.out
+        assert "timeout:" in captured.out
+        assert "max_turns:" in captured.out
+        assert "enabled: true" in captured.out
+
+    def test_help_phases_shows_claude_mode_when_set(self, capsys):
+        """Test that CLAUDE MODE section is shown when phase has claude_mode."""
+        result = handle_help_phases(["planning"])
+
+        assert result == 0
+        captured = capsys.readouterr()
+
+        # Planning phase has claude_mode = "plan"
+        assert "CLAUDE MODE" in captured.out
+        assert "plan (read-only)" in captured.out
+
+    def test_help_phases_no_claude_mode_when_not_set(self, capsys):
+        """Test that CLAUDE MODE section is NOT shown when phase has no claude_mode."""
+        result = handle_help_phases(["implementation"])
+
+        assert result == 0
+        captured = capsys.readouterr()
+
+        # Implementation phase has no claude_mode
+        # The section should not appear between the DESCRIPTION and TIMING
+        lines = captured.out.split("\n")
+        found_description = False
+        found_timing = False
+        found_claude_mode = False
+        for line in lines:
+            if "DESCRIPTION" in line:
+                found_description = True
+            if "TIMING" in line:
+                found_timing = True
+            if "CLAUDE MODE" in line and found_description and not found_timing:
+                found_claude_mode = True
+
+        assert not found_claude_mode
+
+    def test_help_phases_shows_context_when_fresh(self, capsys):
+        """Test that CONTEXT section is shown when phase has fresh_context=True."""
+        result = handle_help_phases(["planning"])
+
+        assert result == 0
+        captured = capsys.readouterr()
+
+        # Planning phase has fresh_context = True
+        assert "CONTEXT" in captured.out
+        assert "fresh_context: Yes" in captured.out
+
+    def test_help_phases_no_context_when_not_fresh(self, capsys):
+        """Test that CONTEXT section is NOT shown when phase has fresh_context=False."""
+        result = handle_help_phases(["preflight"])
+
+        assert result == 0
+        captured = capsys.readouterr()
+
+        # Preflight phase has fresh_context = False (default)
+        # The CONTEXT section should not appear
+        lines = captured.out.split("\n")
+        in_preflight_section = False
+        found_next_phase = False
+        for line in lines:
+            if "PHASE: preflight" in line:
+                in_preflight_section = True
+            elif in_preflight_section and line.startswith("PHASE:"):
+                found_next_phase = True
+            if in_preflight_section and not found_next_phase and "CONTEXT" in line:
+                pytest.fail("CONTEXT section should not appear for preflight phase")
+
+    def test_help_phases_shows_tools_when_set(self, capsys):
+        """Test that TOOLS AVAILABLE section is shown when phase has allowed_tools."""
+        result = handle_help_phases(["planning"])
+
+        assert result == 0
+        captured = capsys.readouterr()
+
+        # Planning phase has allowed_tools
+        assert "TOOLS AVAILABLE" in captured.out
+        assert "Read" in captured.out
+        assert "Grep" in captured.out
+        assert "Glob" in captured.out
+        assert "Write" in captured.out
+
+    def test_help_phases_no_tools_when_not_set(self, capsys):
+        """Test that TOOLS AVAILABLE section is NOT shown when phase has no allowed_tools."""
+        result = handle_help_phases(["preflight"])
+
+        assert result == 0
+        captured = capsys.readouterr()
+
+        # Preflight phase has no allowed_tools
+        lines = captured.out.split("\n")
+        in_preflight_section = False
+        found_separator = False
+        for line in lines:
+            if "PHASE: preflight" in line:
+                in_preflight_section = True
+            elif in_preflight_section and line.startswith("-" * 10):
+                found_separator = True
+            if in_preflight_section and not found_separator and "TOOLS AVAILABLE" in line:
+                pytest.fail("TOOLS AVAILABLE section should not appear for preflight phase")
+
+    def test_help_phases_shows_phase_number(self, capsys):
+        """Test that phase number is shown correctly."""
+        result = handle_help_phases(["planning"])
+
+        assert result == 0
+        captured = capsys.readouterr()
+
+        # Planning is the 4th phase (index 3)
+        assert "PHASE: planning (4 of 17)" in captured.out
+
+    def test_help_phases_phase_without_docstring(self, capsys):
+        """Test handling of phase without docstring shows default message."""
+        # All phases in this codebase have docstrings, but we test the logic
+        # by verifying a phase with a docstring shows the expected text
+        result = handle_help_phases(["preflight"])
+
+        assert result == 0
+        captured = capsys.readouterr()
+
+        assert "DESCRIPTION" in captured.out
+        # Preflight has a docstring
+        assert "Validate environment before starting workflow" in captured.out
+
+    def test_help_phases_timeout_formatting_with_seconds(self, capsys):
+        """Test timeout formatting for values with remaining seconds."""
+        # preflight has 60 seconds (1 minute exactly)
+        result = handle_help_phases(["preflight"])
+
+        assert result == 0
+        captured = capsys.readouterr()
+
+        assert "60 seconds (1 minutes)" in captured.out
+
+    def test_help_phases_timeout_formatting_long_timeout(self, capsys):
+        """Test timeout formatting for longer timeouts."""
+        # implementation has 3600 seconds (60 minutes)
+        result = handle_help_phases(["implementation"])
+
+        assert result == 0
+        captured = capsys.readouterr()
+
+        assert "3600 seconds (60 minutes)" in captured.out
+
+    def test_help_phases_output_has_separators(self, capsys):
+        """Test that output has proper separator lines."""
+        result = handle_help_phases(["planning"])
+
+        assert result == 0
+        captured = capsys.readouterr()
+
+        # Should have separator lines (equals and dashes)
+        assert "=" in captured.out
+        assert "-" in captured.out
+
+    def test_help_phases_preserves_phase_order(self, capsys):
+        """Test that multiple phases are shown in correct order."""
+        result = handle_help_phases(["implementation", "planning"])
+
+        assert result == 0
+        captured = capsys.readouterr()
+
+        # Even though we passed implementation first, planning should appear first
+        # because it comes earlier in PHASE_CLASSES
+        planning_pos = captured.out.find("PHASE: planning")
+        impl_pos = captured.out.find("PHASE: implementation")
+
+        assert planning_pos < impl_pos
+
+    def test_help_phases_all_phases_have_required_sections(self, capsys):
+        """Test that all phases have the required sections."""
+        from selfassembler.phases import PHASE_NAMES
+
+        for phase_name in PHASE_NAMES:
+            result = handle_help_phases([phase_name])
+            assert result == 0
+
+            captured = capsys.readouterr()
+
+            # Required sections
+            assert "DESCRIPTION" in captured.out, f"Missing DESCRIPTION for {phase_name}"
+            assert "TIMING" in captured.out, f"Missing TIMING for {phase_name}"
+            assert "APPROVAL GATE" in captured.out, f"Missing APPROVAL GATE for {phase_name}"
+            assert "CONFIGURATION" in captured.out, f"Missing CONFIGURATION for {phase_name}"

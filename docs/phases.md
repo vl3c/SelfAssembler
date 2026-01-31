@@ -2,6 +2,8 @@
 
 SelfAssembler executes a 16-phase workflow to automate the complete development lifecycle. This document describes each phase in detail.
 
+> **Tip**: Use `selfassembler --help-phases` to see detailed information about each phase directly in your terminal, including timing, tools available, and configuration examples. You can also specify phases: `selfassembler --help-phases planning implementation`
+
 ## Phase Overview
 
 ```

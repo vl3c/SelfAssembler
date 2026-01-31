@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 
@@ -143,6 +144,12 @@ Examples:
         action="store_true",
         help="Show what phases would run without executing them",
     )
+    util_group.add_argument(
+        "--help-phases",
+        nargs="*",
+        metavar="PHASE",
+        help="Show detailed help for workflow phases. Optionally specify phase names.",
+    )
 
     # Output
     output_group = parser.add_argument_group("output")
@@ -241,6 +248,129 @@ def handle_list_phases() -> int:
     return 0
 
 
+def _print_phase_help(phase_class: type, phase_num: int, total_phases: int) -> None:
+    """Print detailed help for a single phase."""
+    term_width = shutil.get_terminal_size().columns
+    separator = "=" * term_width
+    subseparator = "-" * term_width
+
+    # Phase header
+    print(separator)
+    print(f"PHASE: {phase_class.name} ({phase_num} of {total_phases})")
+    print(separator)
+    print()
+
+    # DESCRIPTION
+    print("DESCRIPTION")
+    description = (
+        phase_class.__doc__.strip() if phase_class.__doc__ else "No description available."
+    )
+    print(f"    {description}")
+    print()
+
+    # CLAUDE MODE (only if set)
+    if phase_class.claude_mode:
+        print("CLAUDE MODE")
+        mode_desc = (
+            "plan (read-only)" if phase_class.claude_mode == "plan" else phase_class.claude_mode
+        )
+        print(f"    {mode_desc}")
+        print()
+
+    # CONTEXT (only if fresh_context is True)
+    if phase_class.fresh_context:
+        print("CONTEXT")
+        print("    fresh_context: Yes (starts new Claude session for unbiased analysis)")
+        print()
+
+    # TOOLS AVAILABLE (only if allowed_tools is set)
+    if phase_class.allowed_tools:
+        print("TOOLS AVAILABLE")
+        print(f"    {', '.join(phase_class.allowed_tools)}")
+        print()
+
+    # TIMING
+    print("TIMING")
+    timeout = phase_class.timeout_seconds
+    if timeout >= 60:
+        minutes = timeout // 60
+        seconds = timeout % 60
+        if seconds:
+            timeout_str = f"{timeout} seconds ({minutes} minutes {seconds} seconds)"
+        else:
+            timeout_str = f"{timeout} seconds ({minutes} minutes)"
+    else:
+        timeout_str = f"{timeout} seconds"
+    print(f"    Timeout:    {timeout_str}")
+    print(f"    Max turns:  {phase_class.max_turns}")
+    print()
+
+    # APPROVAL GATE
+    print("APPROVAL GATE")
+    if phase_class.approval_gate:
+        print("    Yes (requires approval before proceeding)")
+    else:
+        print("    No")
+    print()
+
+    # CONFIGURATION
+    print("CONFIGURATION")
+    print("    phases:")
+    print(f"      {phase_class.name}:")
+    print(f"        timeout: {phase_class.timeout_seconds}")
+    print(f"        max_turns: {phase_class.max_turns}")
+    print("        enabled: true")
+    print()
+
+    print(subseparator)
+
+
+def handle_help_phases(phase_names: list[str] | None) -> int:
+    """Show detailed help for workflow phases.
+
+    Args:
+        phase_names: Optional list of phase names to show. If None or empty, shows all phases.
+
+    Returns:
+        0 on success, 1 on invalid phase name.
+    """
+    from selfassembler.phases import PHASE_CLASSES, PHASE_NAMES
+
+    term_width = shutil.get_terminal_size().columns
+    separator = "=" * term_width
+
+    # If specific phases requested, validate them
+    if phase_names:
+        invalid_phases = [p for p in phase_names if p not in PHASE_NAMES]
+        if invalid_phases:
+            print(f"Error: Unknown phase(s): {', '.join(invalid_phases)}", file=sys.stderr)
+            print(f"\nValid phases: {', '.join(PHASE_NAMES)}", file=sys.stderr)
+            return 1
+
+        # Filter to requested phases
+        phases_to_show = [cls for cls in PHASE_CLASSES if cls.name in phase_names]
+    else:
+        phases_to_show = PHASE_CLASSES
+
+    # Print header
+    print()
+    print(separator)
+    title = "SELFASSEMBLER WORKFLOW PHASES"
+    padding = (term_width - len(title)) // 2
+    print(" " * padding + title)
+    print(separator)
+    print()
+
+    # Print each phase
+    total_phases = len(PHASE_CLASSES)
+    for phase_class in phases_to_show:
+        phase_num = PHASE_CLASSES.index(phase_class) + 1
+        _print_phase_help(phase_class, phase_num, total_phases)
+        print()
+
+    return 0
+
+
 def handle_dry_run(config: WorkflowConfig, skip_to: str | None = None) -> int:
     """Display phases that would run without executing them.
 
@@ -271,14 +401,15 @@ def handle_dry_run(config: WorkflowConfig, skip_to: str | None = None) -> int:
             continue
 
         # Determine effective approval gate status
-        # Phase has a gate if approvals are enabled AND the gate is configured
-        # to True in config.approvals.gates (this allows optionally enabling
-        # gates like plan_review even if the phase class doesn't default to it)
+        # Phase has a gate if approvals are enabled AND either:
+        # 1. The phase class has approval_gate=True (default gates like planning), OR
+        # 2. The gate is explicitly enabled in config.approvals.gates (e.g., plan_review)
         has_approval_gate = False
         if config.approvals.enabled:
             phase_name_normalized = phase_class.name.replace("-", "_")
             gate_config = getattr(config.approvals.gates, phase_name_normalized, None)
-            if gate_config is True:
+            # Gate is active if explicitly configured True, or if phase has default gate
+            if gate_config is True or (phase_class.approval_gate and gate_config is not False):
                 has_approval_gate = True
 
         phases_to_run.append(
@@ -361,6 +492,9 @@ def main(args: list[str] | None = None) -> int:
 
     if parsed.list_phases:
         return handle_list_phases()
+
+    if parsed.help_phases is not None:
+        return handle_help_phases(parsed.help_phases if parsed.help_phases else None)
 
     if parsed.init_config:
         return handle_init_config(parsed.config)
