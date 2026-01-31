@@ -153,6 +153,30 @@ Examples:
         action="store_true",
         help="Enable verbose output",
     )
+    output_group.add_argument(
+        "--no-stream",
+        action="store_true",
+        help="Disable streaming output (wait for complete response)",
+    )
+    output_group.add_argument(
+        "--debug",
+        type=str,
+        metavar="CATEGORIES",
+        help="Enable CC debug mode (e.g., 'api,mcp' or '!statsig,!file')",
+    )
+
+    # Plan review options
+    plan_group = parser.add_argument_group("plan review")
+    plan_group.add_argument(
+        "--review-plan-approval",
+        action="store_true",
+        help="Require approval after plan review phase",
+    )
+    plan_group.add_argument(
+        "--skip-plan-review",
+        action="store_true",
+        help="Skip the plan review phase entirely",
+    )
 
     # Version
     parser.add_argument(
@@ -266,6 +290,18 @@ def main(args: list[str] | None = None) -> int:
 
     if parsed.budget:
         config.budget_limit_usd = parsed.budget
+
+    # Apply streaming options
+    if parsed.no_stream:
+        config.streaming.enabled = False
+    if parsed.debug:
+        config.streaming.debug = parsed.debug
+
+    # Apply plan review options
+    if parsed.review_plan_approval:
+        config.approvals.gates.plan_review = True
+    if parsed.skip_plan_review:
+        config.phases.plan_review.enabled = False
 
     if parsed.plans_dir:
         config.plans_dir = str(parsed.plans_dir)

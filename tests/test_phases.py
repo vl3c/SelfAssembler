@@ -15,6 +15,7 @@ from selfassembler.phases import (
     CodeReviewPhase,
     ImplementationPhase,
     PlanningPhase,
+    PlanReviewPhase,
     PreflightPhase,
     ResearchPhase,
     SetupPhase,
@@ -26,8 +27,8 @@ class TestPhaseRegistry:
 
     def test_all_phases_registered(self):
         """Test that all phases are registered."""
-        assert len(PHASE_CLASSES) == 16
-        assert len(PHASE_NAMES) == 16
+        assert len(PHASE_CLASSES) == 17
+        assert len(PHASE_NAMES) == 17
 
     def test_phase_names_match(self):
         """Test that phase names match class names."""
@@ -41,6 +42,7 @@ class TestPhaseRegistry:
             "setup",
             "research",
             "planning",
+            "plan_review",
             "implementation",
             "test_writing",
             "test_execution",
@@ -120,6 +122,24 @@ class TestImplementationPhase:
         assert "Edit" in ImplementationPhase.allowed_tools
         assert "Write" in ImplementationPhase.allowed_tools
         assert "Bash" in ImplementationPhase.allowed_tools
+
+
+class TestPlanReviewPhase:
+    """Tests for PlanReviewPhase."""
+
+    def test_fresh_context(self):
+        """Test plan review uses fresh context."""
+        assert PlanReviewPhase.fresh_context is True
+        assert PlanReviewPhase.claude_mode == "plan"
+
+    def test_no_approval_gate_by_default(self):
+        """Test plan review has no approval gate by default."""
+        assert PlanReviewPhase.approval_gate is False
+
+    def test_has_write_tool(self):
+        """Test plan review can write files."""
+        assert "Write" in PlanReviewPhase.allowed_tools
+        assert "Read" in PlanReviewPhase.allowed_tools
 
 
 class TestCodeReviewPhase:

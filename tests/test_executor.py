@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from selfassembler.executor import ExecutionResult, MockClaudeExecutor
+from selfassembler.executor import ExecutionResult, MockClaudeExecutor, StreamEvent
 
 
 class TestExecutionResult:
@@ -65,3 +65,54 @@ class TestMockClaudeExecutor:
         assert executor.call_history[0]["prompt"] == "prompt 1"
         assert executor.call_history[0]["permission_mode"] == "plan"
         assert executor.call_history[1]["allowed_tools"] == ["Read", "Write"]
+
+
+class TestStreamEvent:
+    """Tests for StreamEvent."""
+
+    def test_from_line_valid_json(self):
+        """Test parsing valid JSON line."""
+        line = '{"type": "tool_use", "name": "Read", "input": {}}'
+        event = StreamEvent.from_line(line)
+
+        assert event is not None
+        assert event.event_type == "tool_use"
+        assert event.data["name"] == "Read"
+
+    def test_from_line_with_whitespace(self):
+        """Test parsing line with whitespace."""
+        line = '  {"type": "assistant", "content": "Hello"}  \n'
+        event = StreamEvent.from_line(line)
+
+        assert event is not None
+        assert event.event_type == "assistant"
+
+    def test_from_line_invalid_json(self):
+        """Test parsing invalid JSON returns None."""
+        line = "not valid json"
+        event = StreamEvent.from_line(line)
+
+        assert event is None
+
+    def test_from_line_empty_line(self):
+        """Test parsing empty line returns None."""
+        line = "   "
+        event = StreamEvent.from_line(line)
+
+        assert event is None
+
+    def test_from_line_unknown_type(self):
+        """Test parsing event without type field."""
+        line = '{"content": "test"}'
+        event = StreamEvent.from_line(line)
+
+        assert event is not None
+        assert event.event_type == "unknown"
+
+    def test_timestamp_auto_set(self):
+        """Test that timestamp is automatically set."""
+        line = '{"type": "test"}'
+        event = StreamEvent.from_line(line)
+
+        assert event is not None
+        assert event.timestamp > 0

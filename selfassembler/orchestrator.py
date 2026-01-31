@@ -16,7 +16,11 @@ from selfassembler.errors import (
 )
 from selfassembler.executor import ClaudeExecutor
 from selfassembler.git import GitManager
-from selfassembler.notifications import Notifier, create_notifier_from_config
+from selfassembler.notifications import (
+    Notifier,
+    create_notifier_from_config,
+    create_stream_callback,
+)
 from selfassembler.phases import PHASE_CLASSES, PHASE_NAMES, Phase, PhaseResult
 from selfassembler.state import ApprovalStore, CheckpointManager, StateStore
 
@@ -49,11 +53,25 @@ class Orchestrator:
     ):
         self.context = context
         self.config = config
+        self.notifier = notifier or create_notifier_from_config(config.to_dict())
+
+        # Set up streaming callback if streaming is enabled
+        stream_callback = None
+        if config.streaming.enabled:
+            stream_callback = create_stream_callback(
+                self.notifier,
+                show_tool_calls=config.streaming.show_tool_calls,
+                truncate_length=config.streaming.truncate_length,
+            )
+
         self.executor = executor or ClaudeExecutor(
             working_dir=context.repo_path,
             default_timeout=config.claude.default_timeout,
+            stream=config.streaming.enabled,
+            stream_callback=stream_callback,
+            verbose=config.streaming.verbose,
+            debug=config.streaming.debug,
         )
-        self.notifier = notifier or create_notifier_from_config(config.to_dict())
         self.checkpoint_manager = checkpoint_manager or CheckpointManager()
         self.approval_store = ApprovalStore(context.plans_dir)
 
