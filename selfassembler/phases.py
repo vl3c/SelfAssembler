@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import re
 import subprocess
 from abc import ABC, abstractmethod
@@ -49,9 +50,9 @@ class Phase(ABC):
 
     def __init__(
         self,
-        context: "WorkflowContext",
-        executor: "ClaudeExecutor",
-        config: "WorkflowConfig",
+        context: WorkflowContext,
+        executor: ClaudeExecutor,
+        config: WorkflowConfig,
     ):
         self.context = context
         self.executor = executor
@@ -827,11 +828,13 @@ class LintCheckPhase(Phase):
             for iteration in range(max_iterations):
                 success, stdout, stderr = run_command(workdir, lint_cmd, timeout=120)
                 output = stdout + stderr
-                results.append({
-                    "command": f"lint_iter_{iteration + 1}",
-                    "success": success,
-                    "output": output,
-                })
+                results.append(
+                    {
+                        "command": f"lint_iter_{iteration + 1}",
+                        "success": success,
+                        "output": output,
+                    }
+                )
 
                 if success:
                     lint_success = True
@@ -853,11 +856,13 @@ class LintCheckPhase(Phase):
             for iteration in range(max_iterations):
                 success, stdout, stderr = run_command(workdir, typecheck_cmd, timeout=180)
                 output = stdout + stderr
-                results.append({
-                    "command": f"typecheck_iter_{iteration + 1}",
-                    "success": success,
-                    "output": output,
-                })
+                results.append(
+                    {
+                        "command": f"typecheck_iter_{iteration + 1}",
+                        "success": success,
+                        "output": output,
+                    }
+                )
 
                 if success:
                     typecheck_success = True
@@ -1145,7 +1150,7 @@ class ConflictCheckPhase(Phase):
         prompt = f"""
 Merge conflicts detected during rebase onto origin/{self.config.git.base_branch}.
 
-Conflicted files: {', '.join(conflicts)}
+Conflicted files: {", ".join(conflicts)}
 
 Steps:
 1. Run `git status` to see conflicted files
@@ -1239,10 +1244,8 @@ Return the PR URL after creation.
             if pr_url:
                 self.context.pr_url = pr_url
                 # Extract PR number
-                try:
+                with contextlib.suppress(ValueError, IndexError):
                     self.context.pr_number = int(pr_url.split("/")[-1])
-                except (ValueError, IndexError):
-                    pass
 
             return PhaseResult(
                 success=not result.is_error,

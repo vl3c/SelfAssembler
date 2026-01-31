@@ -11,9 +11,9 @@ from selfassembler.config import WorkflowConfig
 from selfassembler.errors import (
     ApprovalTimeoutError,
     BudgetExceededError,
-    SelfAssemblerError,
     ContainerRequiredError,
     PhaseFailedError,
+    SelfAssemblerError,
 )
 from selfassembler.orchestrator import Orchestrator, create_orchestrator
 from selfassembler.phases import PHASE_NAMES
@@ -271,21 +271,23 @@ def handle_dry_run(config: WorkflowConfig, skip_to: str | None = None) -> int:
             continue
 
         # Determine effective approval gate status
-        # Phase has a gate if: phase.approval_gate is True AND approvals are enabled
-        # AND the gate is configured in config.approvals.gates
+        # Phase has a gate if approvals are enabled AND the gate is configured
+        # to True in config.approvals.gates (this allows optionally enabling
+        # gates like plan_review even if the phase class doesn't default to it)
         has_approval_gate = False
-        if config.approvals.enabled and phase_class.approval_gate:
-            # Check if this phase has a gate configured
+        if config.approvals.enabled:
             phase_name_normalized = phase_class.name.replace("-", "_")
             gate_config = getattr(config.approvals.gates, phase_name_normalized, None)
             if gate_config is True:
                 has_approval_gate = True
 
-        phases_to_run.append({
-            "name": phase_class.name,
-            "approval_gate": has_approval_gate,
-            "estimated_cost": phase_config.estimated_cost,
-        })
+        phases_to_run.append(
+            {
+                "name": phase_class.name,
+                "approval_gate": has_approval_gate,
+                "estimated_cost": phase_config.estimated_cost,
+            }
+        )
 
     # Handle case where no phases would run
     if not phases_to_run:

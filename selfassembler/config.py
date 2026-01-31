@@ -154,6 +154,13 @@ class CommandsConfig(BaseModel):
     build: str | None = Field(default=None)
 
 
+class RulesConfig(BaseModel):
+    """Configuration for rules/guidelines written to CLAUDE.md."""
+
+    enabled_rules: list[str] = Field(default_factory=lambda: ["no-signature"])
+    custom_rules: list[str] = Field(default_factory=list)
+
+
 class WorkflowConfig(BaseModel):
     """Main configuration for SelfAssembler workflows."""
 
@@ -168,10 +175,11 @@ class WorkflowConfig(BaseModel):
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     commands: CommandsConfig = Field(default_factory=CommandsConfig)
     streaming: StreamingConfig = Field(default_factory=StreamingConfig)
+    rules: RulesConfig = Field(default_factory=RulesConfig)
     copy_files: list[str] = Field(default_factory=lambda: [".env", ".env.local", ".claude/*"])
 
     @classmethod
-    def load(cls, config_path: Path | None = None) -> "WorkflowConfig":
+    def load(cls, config_path: Path | None = None) -> WorkflowConfig:
         """Load configuration from a YAML file."""
         if config_path is None:
             # Search for config file in standard locations

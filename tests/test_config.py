@@ -3,9 +3,7 @@
 import tempfile
 from pathlib import Path
 
-import pytest
-
-from selfassembler.config import StreamingConfig, WorkflowConfig
+from selfassembler.config import RulesConfig, StreamingConfig, WorkflowConfig
 
 
 class TestWorkflowConfig:
@@ -129,3 +127,59 @@ class TestPhaseConfig:
         """Test plan review approval gate is disabled by default."""
         config = WorkflowConfig()
         assert config.approvals.gates.plan_review is False
+
+
+class TestRulesConfig:
+    """Tests for RulesConfig."""
+
+    def test_default_config(self):
+        """Test RulesConfig defaults."""
+        config = RulesConfig()
+        assert config.enabled_rules == ["no-signature"]
+        assert config.custom_rules == []
+
+    def test_in_workflow_config(self):
+        """Test RulesConfig in WorkflowConfig."""
+        config = WorkflowConfig()
+        assert config.rules.enabled_rules == ["no-signature"]
+        assert config.rules.custom_rules == []
+
+    def test_custom_enabled_rules(self):
+        """Test custom enabled rules."""
+        config = RulesConfig(enabled_rules=["no-emojis", "no-yapping"])
+        assert config.enabled_rules == ["no-emojis", "no-yapping"]
+
+    def test_custom_rules_list(self):
+        """Test custom rules list."""
+        custom = ["Custom rule 1", "Custom rule 2"]
+        config = RulesConfig(custom_rules=custom)
+        assert config.custom_rules == custom
+
+    def test_empty_enabled_rules(self):
+        """Test empty enabled rules list."""
+        config = RulesConfig(enabled_rules=[])
+        assert config.enabled_rules == []
+
+    def test_rules_in_to_dict(self):
+        """Test rules config appears in to_dict output."""
+        config = WorkflowConfig()
+        data = config.to_dict()
+        assert "rules" in data
+        assert "enabled_rules" in data["rules"]
+        assert "custom_rules" in data["rules"]
+
+    def test_save_and_load_rules(self):
+        """Test saving and loading rules configuration."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "test_config.yaml"
+
+            # Create config with custom rules
+            config = WorkflowConfig()
+            config.rules.enabled_rules = ["no-emojis", "no-yapping"]
+            config.rules.custom_rules = ["Custom rule here"]
+            config.save(config_path)
+
+            # Load and verify
+            loaded = WorkflowConfig.load(config_path)
+            assert loaded.rules.enabled_rules == ["no-emojis", "no-yapping"]
+            assert loaded.rules.custom_rules == ["Custom rule here"]

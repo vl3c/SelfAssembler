@@ -24,7 +24,8 @@ from selfassembler.notifications import (
     create_stream_callback,
 )
 from selfassembler.phases import PHASE_CLASSES, PHASE_NAMES, Phase, PhaseResult
-from selfassembler.state import ApprovalStore, CheckpointManager, StateStore
+from selfassembler.rules import RulesManager
+from selfassembler.state import ApprovalStore, CheckpointManager
 
 if TYPE_CHECKING:
     from selfassembler.config import WorkflowConfig
@@ -62,7 +63,7 @@ class WorkflowLogger:
 
         # Write to text log
         with open(self.log_file, "a") as f:
-            f.write(f"\n{'='*80}\n")
+            f.write(f"\n{'=' * 80}\n")
             f.write(f"[{entry['timestamp']}] {event}")
             if phase:
                 f.write(f" (phase: {phase})")
@@ -77,9 +78,7 @@ class WorkflowLogger:
         with open(self.json_log_file, "a") as f:
             f.write(json.dumps(entry) + "\n")
 
-    def log_command(
-        self, command: str | list, cwd: Path | None, phase: str | None = None
-    ) -> None:
+    def log_command(self, command: str | list, cwd: Path | None, phase: str | None = None) -> None:
         """Log a command execution."""
         cmd_str = " ".join(command) if isinstance(command, list) else command
         self.log(
@@ -130,7 +129,7 @@ class Orchestrator:
     def __init__(
         self,
         context: WorkflowContext,
-        config: "WorkflowConfig",
+        config: WorkflowConfig,
         executor: ClaudeExecutor | None = None,
         notifier: Notifier | None = None,
         checkpoint_manager: CheckpointManager | None = None,
@@ -199,6 +198,32 @@ class Orchestrator:
                 },
             )
             self.executor = self._create_executor(self.context.worktree_path)
+
+    def _write_rules_to_worktree(self) -> None:
+        """Write CLAUDE.md with project rules to the worktree.
+
+        Called after setup phase to ensure Claude follows project rules.
+        """
+        if not self.context.worktree_path or not self.context.worktree_path.exists():
+            return
+
+        rules_manager = RulesManager(
+            enabled_rules=self.config.rules.enabled_rules,
+            custom_rules=self.config.rules.custom_rules,
+        )
+
+        rules_manager.write_to_worktree(self.context.worktree_path)
+
+        active_rules = rules_manager.get_active_rules()
+        if active_rules:
+            self.logger.log(
+                "rules_written_to_worktree",
+                data={
+                    "worktree_path": str(self.context.worktree_path),
+                    "rule_count": len(active_rules),
+                    "rule_ids": [r.id for r in active_rules],
+                },
+            )
 
     def _enforce_container_runtime(self) -> None:
         """Refuse to run autonomous mode outside a container."""
@@ -308,9 +333,10 @@ class Orchestrator:
                 phase = phase_class(self.context, self.executor, self.config)
                 self._run_phase(phase)
 
-                # After setup phase, reinitialize executor for worktree
+                # After setup phase, reinitialize executor for worktree and write rules
                 if phase_class.name == "setup" and self.context.worktree_path:
                     self._reinitialize_executor_for_worktree()
+                    self._write_rules_to_worktree()
 
             # Workflow complete
             self.notifier.on_workflow_complete(self.context)
@@ -550,8 +576,8 @@ class Orchestrator:
     def from_checkpoint(
         cls,
         checkpoint_id: str,
-        config: "WorkflowConfig | None" = None,
-    ) -> "Orchestrator":
+        config: WorkflowConfig | None = None,
+    ) -> Orchestrator:
         """
         Create an orchestrator from a checkpoint.
 
@@ -598,7 +624,7 @@ def create_orchestrator(
     task_description: str,
     task_name: str,
     repo_path: Path | None = None,
-    config: "WorkflowConfig | None" = None,
+    config: WorkflowConfig | None = None,
 ) -> Orchestrator:
     """
     Create a new Orchestrator for a task.

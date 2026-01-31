@@ -1,10 +1,6 @@
 """Tests for CLI module."""
 
-import io
-import sys
-from unittest.mock import patch
 
-import pytest
 
 from selfassembler.cli import create_parser, generate_task_name, handle_dry_run
 from selfassembler.config import WorkflowConfig
@@ -248,14 +244,10 @@ class TestHandleDryRun:
         # Count lines with "Yes" for approval gate (should be none)
         lines = captured.out.split("\n")
         # Skip header lines - look at data lines only
-        data_lines = [
-            line for line in lines if line.strip() and line.strip()[0].isdigit()
-        ]
+        data_lines = [line for line in lines if line.strip() and line.strip()[0].isdigit()]
 
         # None of the data lines should have "Yes" for approval gate
         for line in data_lines:
-            # The approval gate column should be "No"
-            parts = line.split()
             # Find "Yes" in the line - should not be there when approvals disabled
             assert "Yes" not in line or "No" in line
 
@@ -372,9 +364,7 @@ class TestHandleDryRun:
 
         # Should have numbered phases starting from 1
         lines = captured.out.split("\n")
-        data_lines = [
-            line for line in lines if line.strip() and line.strip()[0].isdigit()
-        ]
+        data_lines = [line for line in lines if line.strip() and line.strip()[0].isdigit()]
 
         # First phase should be #1
         assert data_lines[0].strip().startswith("1")
@@ -391,9 +381,7 @@ class TestHandleDryRun:
         assert "Running Total" in captured.out
 
         lines = captured.out.split("\n")
-        data_lines = [
-            line for line in lines if line.strip() and line.strip()[0].isdigit()
-        ]
+        data_lines = [line for line in lines if line.strip() and line.strip()[0].isdigit()]
 
         # Each line should have dollar amounts for running total
         for line in data_lines:
@@ -437,9 +425,7 @@ class TestHandleDryRun:
 
         # Should show only 1 phase
         lines = captured.out.split("\n")
-        data_lines = [
-            line for line in lines if line.strip() and line.strip()[0].isdigit()
-        ]
+        data_lines = [line for line in lines if line.strip() and line.strip()[0].isdigit()]
         assert len(data_lines) == 1
 
     def test_dry_run_with_custom_estimated_costs(self, capsys):

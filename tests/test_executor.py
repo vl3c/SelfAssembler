@@ -1,8 +1,6 @@
 """Tests for Claude executor."""
 
-from pathlib import Path
 
-import pytest
 
 from selfassembler.executor import ExecutionResult, MockClaudeExecutor, StreamEvent
 

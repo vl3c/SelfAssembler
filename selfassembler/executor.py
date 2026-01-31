@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from selfassembler.errors import ClaudeExecutionError
 
@@ -40,7 +42,7 @@ class StreamEvent:
     timestamp: float = field(default_factory=time.time)
 
     @classmethod
-    def from_line(cls, line: str) -> "StreamEvent | None":
+    def from_line(cls, line: str) -> StreamEvent | None:
         """Parse a line of stream-json output into a StreamEvent."""
         try:
             data = json.loads(line.strip())
@@ -62,7 +64,7 @@ class ClaudeExecutor:
         default_timeout: int = 600,
         model: str | None = None,
         stream: bool = True,
-        stream_callback: Callable[["StreamEvent"], None] | None = None,
+        stream_callback: Callable[[StreamEvent], None] | None = None,
         verbose: bool = True,
         debug: str | None = None,
     ):
@@ -159,10 +161,10 @@ class ClaudeExecutor:
         except FileNotFoundError:
             raise ClaudeExecutionError(
                 "Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code"
-            )
+            ) from None
 
         except Exception as e:
-            raise ClaudeExecutionError(f"Execution failed: {e}")
+            raise ClaudeExecutionError(f"Execution failed: {e}") from e
 
     def _build_command(
         self,
@@ -256,10 +258,8 @@ class ClaudeExecutor:
 
                         # Call the stream callback if provided
                         if self.stream_callback:
-                            try:
+                            with contextlib.suppress(Exception):
                                 self.stream_callback(event)
-                            except Exception:
-                                pass  # Don't let callback errors break execution
 
                         # Capture the final result event
                         if event.event_type == "result":
@@ -283,8 +283,7 @@ class ClaudeExecutor:
                     cost_usd=self._parse_cost(final_result_data),
                     duration_ms=final_result_data.get("duration_ms", elapsed_ms),
                     num_turns=final_result_data.get("num_turns", 0),
-                    is_error=final_result_data.get("is_error", False)
-                    or process.returncode != 0,
+                    is_error=final_result_data.get("is_error", False) or process.returncode != 0,
                     raw_output=json.dumps(final_result_data),
                     subagent_results=final_result_data.get("subagent_results", []),
                 )
@@ -317,10 +316,10 @@ class ClaudeExecutor:
         except FileNotFoundError:
             raise ClaudeExecutionError(
                 "Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code"
-            )
+            ) from None
 
         except Exception as e:
-            raise ClaudeExecutionError(f"Streaming execution failed: {e}")
+            raise ClaudeExecutionError(f"Streaming execution failed: {e}") from e
 
     def _parse_result(
         self, result: subprocess.CompletedProcess, elapsed_ms: int

@@ -189,6 +189,12 @@ approvals:
   gates:
     planning: true  # Pause after planning
 
+# Rules written to CLAUDE.md in the worktree
+rules:
+  enabled_rules:
+    - "no-signature"  # Available: no-signature, no-emojis, no-yapping
+  custom_rules: []    # Add custom rule descriptions
+
 # Notifications
 notifications:
   console:
@@ -198,7 +204,7 @@ notifications:
     url: "https://your-webhook.example.com/notify"
 ```
 
-See [`selfassembler.yaml.example`](selfassembler.yaml.example) for all available options.
+See [`docs/configuration.md`](docs/configuration.md) for all available options.
 
 ## Operating Modes
 

@@ -1,15 +1,11 @@
 """Tests for command detection."""
 
-import json
 import tempfile
 from pathlib import Path
-
-import pytest
 
 from selfassembler.commands import (
     detect_all_project_types,
     detect_project_type,
-    get_all_commands,
     get_command,
     parse_test_output,
 )
