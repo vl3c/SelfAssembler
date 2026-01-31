@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from selfassembler.context import WorkflowContext
+    from selfassembler.executor import StreamEvent
     from selfassembler.phases import PhaseResult
 
 
@@ -250,6 +251,53 @@ Resume with: selfassembler --resume {context.checkpoint_id}
     def on_checkpoint_created(self, checkpoint_id: str) -> None:
         """Notify that a checkpoint was created."""
         self._send(f"Checkpoint created: {checkpoint_id}", level="info")
+
+    def on_stream_event(
+        self,
+        event: "StreamEvent",
+        show_tool_calls: bool = True,
+        truncate_length: int = 200,
+    ) -> None:
+        """Handle a streaming event from Claude CLI."""
+        if event.event_type == "tool_use" and show_tool_calls:
+            tool_name = event.data.get("name", "unknown")
+            self._send(f"  Using tool: {tool_name}", level="info")
+        elif event.event_type == "assistant":
+            # Extract and show truncated text from assistant message
+            content = event.data.get("content", "")
+            if isinstance(content, list):
+                # Handle content blocks
+                text_parts = []
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text_parts.append(block.get("text", ""))
+                content = " ".join(text_parts)
+            if content:
+                preview = content[:truncate_length]
+                if len(content) > truncate_length:
+                    preview += "..."
+                # Only show non-empty previews
+                if preview.strip():
+                    self._send(f"  {preview}", level="info")
+        elif event.event_type == "system":
+            # System messages like session start
+            message = event.data.get("message", "")
+            if message:
+                self._send(f"  {message}", level="info")
+
+
+def create_stream_callback(
+    notifier: Notifier,
+    show_tool_calls: bool = True,
+    truncate_length: int = 200,
+) -> Any:
+    """Create a stream callback function from a notifier."""
+    from selfassembler.executor import StreamEvent
+
+    def callback(event: StreamEvent) -> None:
+        notifier.on_stream_event(event, show_tool_calls, truncate_length)
+
+    return callback
 
 
 def create_notifier_from_config(config: dict[str, Any]) -> Notifier:

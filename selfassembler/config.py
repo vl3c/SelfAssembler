@@ -17,6 +17,16 @@ class ClaudeConfig(BaseModel):
     dangerous_mode: bool = Field(default=False)
 
 
+class StreamingConfig(BaseModel):
+    """Configuration for streaming output."""
+
+    enabled: bool = Field(default=True)
+    verbose: bool = Field(default=True)  # --verbose flag
+    debug: str | None = Field(default=None)  # --debug categories
+    show_tool_calls: bool = Field(default=True)
+    truncate_length: int = Field(default=200)
+
+
 class GitConfig(BaseModel):
     """Configuration for git operations."""
 
@@ -47,6 +57,9 @@ class PhasesConfig(BaseModel):
     )
     planning: PhaseConfig = Field(
         default_factory=lambda: PhaseConfig(timeout=600, max_turns=20, estimated_cost=1.0)
+    )
+    plan_review: PhaseConfig = Field(
+        default_factory=lambda: PhaseConfig(timeout=600, max_turns=30, estimated_cost=1.0)
     )
     implementation: PhaseConfig = Field(
         default_factory=lambda: PhaseConfig(timeout=3600, max_turns=100, estimated_cost=3.0)
@@ -92,6 +105,7 @@ class ApprovalGatesConfig(BaseModel):
     """Configuration for approval gates."""
 
     planning: bool = Field(default=True)
+    plan_review: bool = Field(default=False)
     implementation: bool = Field(default=False)
     pr_creation: bool = Field(default=False)
 
@@ -150,6 +164,7 @@ class WorkflowConfig(BaseModel):
     approvals: ApprovalsConfig = Field(default_factory=ApprovalsConfig)
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     commands: CommandsConfig = Field(default_factory=CommandsConfig)
+    streaming: StreamingConfig = Field(default_factory=StreamingConfig)
     copy_files: list[str] = Field(default_factory=lambda: [".env", ".env.local", ".claude/*"])
 
     @classmethod

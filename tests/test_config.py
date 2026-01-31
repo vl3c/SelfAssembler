@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from selfassembler.config import WorkflowConfig
+from selfassembler.config import StreamingConfig, WorkflowConfig
 
 
 class TestWorkflowConfig:
@@ -61,6 +61,37 @@ class TestWorkflowConfig:
         assert "phases" in data
 
 
+class TestStreamingConfig:
+    """Tests for streaming configuration."""
+
+    def test_default_config(self):
+        """Test streaming defaults."""
+        config = StreamingConfig()
+        assert config.enabled is True
+        assert config.verbose is True
+        assert config.debug is None
+        assert config.show_tool_calls is True
+        assert config.truncate_length == 200
+
+    def test_in_workflow_config(self):
+        """Test streaming config in workflow config."""
+        config = WorkflowConfig()
+        assert config.streaming.enabled is True
+        assert config.streaming.verbose is True
+
+    def test_custom_values(self):
+        """Test custom streaming config values."""
+        config = StreamingConfig(
+            enabled=False,
+            verbose=False,
+            debug="api,mcp",
+            truncate_length=100,
+        )
+        assert config.enabled is False
+        assert config.debug == "api,mcp"
+        assert config.truncate_length == 100
+
+
 class TestPhaseConfig:
     """Tests for phase configuration."""
 
@@ -74,6 +105,7 @@ class TestPhaseConfig:
             "setup",
             "research",
             "planning",
+            "plan_review",
             "implementation",
             "test_writing",
             "test_execution",
@@ -92,3 +124,8 @@ class TestPhaseConfig:
             phase = config.get_phase_config(name)
             assert phase.timeout > 0
             assert phase.enabled is True
+
+    def test_plan_review_approval_gate(self):
+        """Test plan review approval gate is disabled by default."""
+        config = WorkflowConfig()
+        assert config.approvals.gates.plan_review is False

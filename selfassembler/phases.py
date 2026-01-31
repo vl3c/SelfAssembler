@@ -352,6 +352,98 @@ Plan format:
         )
 
 
+class PlanReviewPhase(Phase):
+    """Review and improve the implementation plan with SWOT analysis."""
+
+    name = "plan_review"
+    claude_mode = "plan"
+    fresh_context = True  # Critical: unbiased review
+    allowed_tools = ["Read", "Grep", "Glob", "Write"]
+    max_turns = 30
+    timeout_seconds = 600
+    approval_gate = False  # Configurable via --review-plan-approval
+
+    def run(self) -> PhaseResult:
+        plan_file = self.context.plans_dir / f"plan-{self.context.task_name}.md"
+        review_file = self.context.plans_dir / f"plan-review-{self.context.task_name}.md"
+
+        if not plan_file.exists():
+            return PhaseResult(
+                success=True,
+                artifacts={"skipped": "No plan file found"},
+            )
+
+        prompt = f"""
+Review and improve the implementation plan for: {self.context.task_description}
+
+1. Read the plan at: {plan_file}
+
+2. Perform a SWOT analysis of the plan:
+   - Strengths: What's well-planned and will likely succeed?
+   - Weaknesses: What's missing, unclear, or poorly planned?
+   - Opportunities: What could be improved or added?
+   - Threats: What could go wrong? What are the risks?
+
+3. Write your review to: {review_file}
+
+Format:
+```markdown
+# Plan Review: {self.context.task_name}
+
+## SWOT Analysis
+
+### Strengths
+- [What's well-planned]
+
+### Weaknesses
+- [What's missing or unclear]
+
+### Opportunities
+- [Improvements to consider]
+
+### Threats
+- [Risks and potential issues]
+
+## Recommended Changes
+- [Specific improvements to make]
+
+## Verdict
+[Overall assessment: Ready/Needs Revision/Major Concerns]
+```
+
+4. After writing the review, update the original plan at {plan_file}:
+   - Add a "## Revisions" section at the end
+   - Incorporate the recommended changes
+   - Address any weaknesses identified
+   - Note any risks that should be monitored
+
+Be thorough but constructive. The goal is to improve the plan, not block it.
+"""
+        phase_config = self.get_phase_config()
+        result = self.executor.execute(
+            prompt=prompt,
+            permission_mode=self.claude_mode,
+            allowed_tools=self.allowed_tools,
+            max_turns=phase_config.max_turns,
+            timeout=phase_config.timeout,
+            working_dir=self.context.get_working_dir(),
+        )
+
+        self.context.add_cost(self.name, result.cost_usd)
+        self.context.set_session_id(self.name, result.session_id)
+
+        return PhaseResult(
+            success=not result.is_error,
+            cost_usd=result.cost_usd,
+            error=result.output if result.is_error else None,
+            artifacts={
+                "review_file": str(review_file),
+                "plan_file": str(plan_file),
+            },
+            session_id=result.session_id,
+        )
+
+
 class ImplementationPhase(Phase):
     """Implement the planned changes."""
 
@@ -1163,6 +1255,7 @@ PHASE_CLASSES: list[type[Phase]] = [
     SetupPhase,
     ResearchPhase,
     PlanningPhase,
+    PlanReviewPhase,
     ImplementationPhase,
     TestWritingPhase,
     TestExecutionPhase,

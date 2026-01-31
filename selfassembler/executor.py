@@ -7,7 +7,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from selfassembler.errors import ClaudeExecutionError
 
@@ -31,6 +31,24 @@ class ExecutionResult:
         return self.duration_ms / 1000.0
 
 
+@dataclass
+class StreamEvent:
+    """A single streaming event from Claude CLI."""
+
+    event_type: str
+    data: dict[str, Any]
+    timestamp: float = field(default_factory=time.time)
+
+    @classmethod
+    def from_line(cls, line: str) -> "StreamEvent | None":
+        """Parse a line of stream-json output into a StreamEvent."""
+        try:
+            data = json.loads(line.strip())
+            return cls(event_type=data.get("type", "unknown"), data=data)
+        except json.JSONDecodeError:
+            return None
+
+
 class ClaudeExecutor:
     """
     Wrapper for the Claude Code CLI.
@@ -43,10 +61,18 @@ class ClaudeExecutor:
         working_dir: Path,
         default_timeout: int = 600,
         model: str | None = None,
+        stream: bool = True,
+        stream_callback: Callable[["StreamEvent"], None] | None = None,
+        verbose: bool = True,
+        debug: str | None = None,
     ):
         self.working_dir = working_dir
         self.default_timeout = default_timeout
         self.model = model
+        self.stream = stream
+        self.stream_callback = stream_callback
+        self.verbose = verbose
+        self.debug = debug
 
     def execute(
         self,
@@ -58,6 +84,7 @@ class ClaudeExecutor:
         resume_session: str | None = None,
         dangerous_mode: bool = False,
         working_dir: Path | None = None,
+        stream: bool | None = None,
     ) -> ExecutionResult:
         """
         Execute a prompt with Claude CLI.
@@ -71,6 +98,7 @@ class ClaudeExecutor:
             resume_session: Session ID to resume
             dangerous_mode: Use --dangerously-skip-permissions
             working_dir: Override working directory
+            stream: Override streaming mode (uses instance default if None)
 
         Returns:
             ExecutionResult with parsed output
@@ -78,6 +106,22 @@ class ClaudeExecutor:
         Raises:
             ClaudeExecutionError: If execution fails
         """
+        use_stream = stream if stream is not None else self.stream
+        effective_timeout = timeout or self.default_timeout
+        effective_working_dir = working_dir or self.working_dir
+
+        if use_stream:
+            return self._execute_streaming(
+                prompt=prompt,
+                permission_mode=permission_mode,
+                allowed_tools=allowed_tools,
+                max_turns=max_turns,
+                timeout=effective_timeout,
+                resume_session=resume_session,
+                dangerous_mode=dangerous_mode,
+                working_dir=effective_working_dir,
+            )
+
         cmd = self._build_command(
             prompt=prompt,
             permission_mode=permission_mode,
@@ -85,10 +129,8 @@ class ClaudeExecutor:
             max_turns=max_turns,
             resume_session=resume_session,
             dangerous_mode=dangerous_mode,
+            streaming=False,
         )
-
-        effective_timeout = timeout or self.default_timeout
-        effective_working_dir = working_dir or self.working_dir
 
         start_time = time.time()
         try:
@@ -130,6 +172,7 @@ class ClaudeExecutor:
         max_turns: int = 50,
         resume_session: str | None = None,
         dangerous_mode: bool = False,
+        streaming: bool = True,
     ) -> list[str]:
         """Build the claude CLI command."""
         cmd = ["claude", "-p", prompt]
@@ -148,10 +191,136 @@ class ClaudeExecutor:
         if self.model:
             cmd.extend(["--model", self.model])
 
-        cmd.extend(["--output-format", "json"])
+        # Output format: stream-json for streaming, json for non-streaming
+        if streaming:
+            cmd.extend(["--output-format", "stream-json"])
+            if self.verbose:
+                cmd.append("--verbose")
+            if self.debug:
+                cmd.extend(["--debug", self.debug])
+        else:
+            cmd.extend(["--output-format", "json"])
+
         cmd.extend(["--max-turns", str(max_turns)])
 
         return cmd
+
+    def _execute_streaming(
+        self,
+        prompt: str,
+        permission_mode: str | None = None,
+        allowed_tools: list[str] | None = None,
+        max_turns: int = 50,
+        timeout: int = 600,
+        resume_session: str | None = None,
+        dangerous_mode: bool = False,
+        working_dir: Path | None = None,
+    ) -> ExecutionResult:
+        """Execute with streaming output."""
+        cmd = self._build_command(
+            prompt=prompt,
+            permission_mode=permission_mode,
+            allowed_tools=allowed_tools,
+            max_turns=max_turns,
+            resume_session=resume_session,
+            dangerous_mode=dangerous_mode,
+            streaming=True,
+        )
+
+        effective_working_dir = working_dir or self.working_dir
+        start_time = time.time()
+
+        # Collect all events and the final result
+        all_events: list[StreamEvent] = []
+        final_result_data: dict[str, Any] | None = None
+
+        try:
+            process = subprocess.Popen(
+                cmd,
+                cwd=effective_working_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,  # Line buffered
+            )
+
+            # Read stdout line by line
+            if process.stdout:
+                for line in process.stdout:
+                    if not line.strip():
+                        continue
+
+                    event = StreamEvent.from_line(line)
+                    if event:
+                        all_events.append(event)
+
+                        # Call the stream callback if provided
+                        if self.stream_callback:
+                            try:
+                                self.stream_callback(event)
+                            except Exception:
+                                pass  # Don't let callback errors break execution
+
+                        # Capture the final result event
+                        if event.event_type == "result":
+                            final_result_data = event.data
+
+            # Wait for process to complete with timeout
+            remaining_timeout = timeout - (time.time() - start_time)
+            if remaining_timeout > 0:
+                process.wait(timeout=remaining_timeout)
+            else:
+                process.kill()
+                process.wait()
+
+            elapsed_ms = int((time.time() - start_time) * 1000)
+
+            # Parse result from final event or fallback
+            if final_result_data:
+                return ExecutionResult(
+                    session_id=final_result_data.get("session_id", ""),
+                    output=final_result_data.get("result", ""),
+                    cost_usd=self._parse_cost(final_result_data),
+                    duration_ms=final_result_data.get("duration_ms", elapsed_ms),
+                    num_turns=final_result_data.get("num_turns", 0),
+                    is_error=final_result_data.get("is_error", False)
+                    or process.returncode != 0,
+                    raw_output=json.dumps(final_result_data),
+                    subagent_results=final_result_data.get("subagent_results", []),
+                )
+
+            # No result event found, construct from events
+            return ExecutionResult(
+                session_id="",
+                output="Streaming completed without result event",
+                cost_usd=0.0,
+                duration_ms=elapsed_ms,
+                num_turns=len([e for e in all_events if e.event_type == "assistant"]),
+                is_error=process.returncode != 0,
+                raw_output="",
+            )
+
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            return ExecutionResult(
+                session_id="",
+                output=f"Timeout after {timeout}s",
+                cost_usd=0.0,
+                duration_ms=elapsed_ms,
+                num_turns=0,
+                is_error=True,
+                raw_output="",
+            )
+
+        except FileNotFoundError:
+            raise ClaudeExecutionError(
+                "Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code"
+            )
+
+        except Exception as e:
+            raise ClaudeExecutionError(f"Streaming execution failed: {e}")
 
     def _parse_result(
         self, result: subprocess.CompletedProcess, elapsed_ms: int
@@ -231,7 +400,7 @@ class MockClaudeExecutor(ClaudeExecutor):
     """Mock executor for testing."""
 
     def __init__(self, responses: dict[str, ExecutionResult] | None = None):
-        super().__init__(working_dir=Path("."))
+        super().__init__(working_dir=Path("."), stream=False)
         self.responses = responses or {}
         self.call_history: list[dict[str, Any]] = []
 
@@ -245,6 +414,7 @@ class MockClaudeExecutor(ClaudeExecutor):
         resume_session: str | None = None,
         dangerous_mode: bool = False,
         working_dir: Path | None = None,
+        stream: bool | None = None,
     ) -> ExecutionResult:
         """Record the call and return a mock response."""
         self.call_history.append(
