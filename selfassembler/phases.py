@@ -118,7 +118,7 @@ class PreflightPhase(Phase):
             return {"name": "claude_cli", "passed": False, "message": str(e)}
 
     def _check_gh_cli(self) -> dict[str, Any]:
-        """Check if GitHub CLI is authenticated."""
+        """Check if GitHub CLI is authenticated and configure git credentials."""
         try:
             result = subprocess.run(
                 ["gh", "auth", "status"],
@@ -127,6 +127,12 @@ class PreflightPhase(Phase):
                 timeout=10,
             )
             if result.returncode == 0:
+                # Configure git to use gh as credential helper
+                subprocess.run(
+                    ["gh", "auth", "setup-git"],
+                    capture_output=True,
+                    timeout=10,
+                )
                 return {"name": "gh_cli", "passed": True}
             return {
                 "name": "gh_cli",
