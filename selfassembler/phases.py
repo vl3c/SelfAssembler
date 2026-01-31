@@ -286,6 +286,7 @@ class PlanningPhase(Phase):
 
     name = "planning"
     claude_mode = "plan"
+    fresh_context = True  # Fresh eyes to avoid research biases in plan structure
     allowed_tools = ["Read", "Grep", "Glob", "Write"]
     max_turns = 20
     timeout_seconds = 600
@@ -789,6 +790,7 @@ class LintCheckPhase(Phase):
     """Run linting and type checking."""
 
     name = "lint_check"
+    fresh_context = True  # Fresh eyes for mechanical fixes without prior assumptions
     allowed_tools = ["Bash", "Read", "Edit"]
     max_turns = 20
     timeout_seconds = 300
@@ -950,16 +952,31 @@ class DocumentationPhase(Phase):
     timeout_seconds = 600
 
     def run(self) -> PhaseResult:
+        plan_path = self.context.plans_dir / f"plan-{self.context.task_name}.md"
         prompt = f"""
 Update documentation for: {self.context.task_description}
 
-1. Check if README.md needs updates
-2. Update any relevant docs/ files
-3. Ensure code comments are adequate for complex logic
-4. Update CHANGELOG.md if it exists (add to Unreleased section)
+## First, gather context by reviewing:
 
-Only make documentation changes if they are necessary.
-Do NOT create new documentation files unless they are clearly needed.
+1. **Modified files**: Run `git diff --name-only` to see what changed
+2. **Recent commits**: Run `git log --oneline -10` to understand the changes
+3. **The implementation plan**: Read {plan_path} if it exists
+4. **Existing documentation**: Check README.md, docs/ directory, CONTRIBUTING.md
+
+## Then, update documentation as needed:
+
+1. **README.md**: Update if new features, config options, or usage patterns were added
+2. **docs/ files**: Update relevant guides or API documentation
+3. **Code comments**: Ensure complex logic has adequate inline comments
+4. **CHANGELOG.md**: If it exists, add entry to Unreleased section
+5. **Configuration examples**: Update example configs if new options were added
+
+## Guidelines:
+
+- Only make documentation changes that are necessary
+- Do NOT create new documentation files unless clearly needed
+- Match the existing documentation style and format
+- Keep changes focused on what was actually implemented
 """
         phase_config = self.get_phase_config()
         result = self.executor.execute(
