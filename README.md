@@ -107,6 +107,12 @@ selfassembler "Fix bug" --name bugfix --repo /path/to/project
 # List all workflow phases
 selfassembler --list-phases
 
+# Show detailed help for all phases
+selfassembler --help-phases
+
+# Show detailed help for specific phases
+selfassembler --help-phases planning implementation
+
 # List available checkpoints
 selfassembler --list-checkpoints
 
