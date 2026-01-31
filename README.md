@@ -391,7 +391,3 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## Contributing
 
 Contributions are welcome! Please read the contributing guidelines before submitting PRs.
-
-## Acknowledgments
-
-Built to work with [Claude Code](https://github.com/anthropics/claude-code) by Anthropic.
