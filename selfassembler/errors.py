@@ -45,7 +45,7 @@ class PreflightFailedError(SelfAssemblerError):
 
     def __init__(self, failed_checks: list[dict]):
         messages = [check["message"] for check in failed_checks]
-        super().__init__(f"Preflight checks failed:\n" + "\n".join(f"  - {m}" for m in messages))
+        super().__init__("Preflight checks failed:\n" + "\n".join(f"  - {m}" for m in messages))
         self.failed_checks = failed_checks
 
 

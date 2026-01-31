@@ -1,6 +1,11 @@
 """SelfAssembler - Autonomous multi-phase workflow orchestrator for Claude Code CLI."""
 
-__version__ = "0.1.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("selfassembler")
+except PackageNotFoundError:
+    __version__ = "0.0.0"  # Fallback for development
 __author__ = "SelfAssembler Contributors"
 
 from selfassembler.config import WorkflowConfig

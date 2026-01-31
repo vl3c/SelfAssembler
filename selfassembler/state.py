@@ -30,10 +30,7 @@ class StateStore:
         """Get the default state directory."""
         # Use XDG_STATE_HOME or fallback to ~/.local/state
         xdg_state = os.environ.get("XDG_STATE_HOME")
-        if xdg_state:
-            base = Path(xdg_state)
-        else:
-            base = Path.home() / ".local" / "state"
+        base = Path(xdg_state) if xdg_state else Path.home() / ".local" / "state"
         return base / "selfassembler"
 
     def save(self, key: str, data: dict[str, Any]) -> Path:
@@ -90,14 +87,14 @@ class CheckpointManager:
         self.store = state_store or StateStore()
         self.checkpoint_prefix = "checkpoint_"
 
-    def _generate_checkpoint_id(self, context: "WorkflowContext") -> str:
+    def _generate_checkpoint_id(self, context: WorkflowContext) -> str:
         """Generate a unique checkpoint ID."""
         # Create a hash from task name and timestamp
         data = f"{context.task_name}-{context.started_at.isoformat()}"
         hash_part = hashlib.sha256(data.encode()).hexdigest()[:8]
         return f"{self.checkpoint_prefix}{hash_part}"
 
-    def create_checkpoint(self, context: "WorkflowContext") -> str:
+    def create_checkpoint(self, context: WorkflowContext) -> str:
         """
         Create a checkpoint for the current workflow state.
 
@@ -126,7 +123,7 @@ class CheckpointManager:
         except Exception as e:
             raise CheckpointError(f"Failed to create checkpoint: {e}") from e
 
-    def load_checkpoint(self, checkpoint_id: str) -> "WorkflowContext":
+    def load_checkpoint(self, checkpoint_id: str) -> WorkflowContext:
         """
         Load a checkpoint and restore workflow context.
 

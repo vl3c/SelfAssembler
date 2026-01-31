@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import re
 import subprocess
 from abc import ABC, abstractmethod
@@ -49,9 +50,9 @@ class Phase(ABC):
 
     def __init__(
         self,
-        context: "WorkflowContext",
-        executor: "ClaudeExecutor",
-        config: "WorkflowConfig",
+        context: WorkflowContext,
+        executor: ClaudeExecutor,
+        config: WorkflowConfig,
     ):
         self.context = context
         self.executor = executor
@@ -118,7 +119,7 @@ class PreflightPhase(Phase):
             return {"name": "claude_cli", "passed": False, "message": str(e)}
 
     def _check_gh_cli(self) -> dict[str, Any]:
-        """Check if GitHub CLI is authenticated."""
+        """Check if GitHub CLI is authenticated and configure git credentials."""
         try:
             result = subprocess.run(
                 ["gh", "auth", "status"],
@@ -127,6 +128,12 @@ class PreflightPhase(Phase):
                 timeout=10,
             )
             if result.returncode == 0:
+                # Configure git to use gh as credential helper
+                subprocess.run(
+                    ["gh", "auth", "setup-git"],
+                    capture_output=True,
+                    timeout=10,
+                )
                 return {"name": "gh_cli", "passed": True}
             return {
                 "name": "gh_cli",
@@ -286,6 +293,7 @@ class PlanningPhase(Phase):
 
     name = "planning"
     claude_mode = "plan"
+    fresh_context = True  # Fresh eyes to avoid research biases in plan structure
     allowed_tools = ["Read", "Grep", "Glob", "Write"]
     max_turns = 20
     timeout_seconds = 600
@@ -789,6 +797,7 @@ class LintCheckPhase(Phase):
     """Run linting and type checking."""
 
     name = "lint_check"
+    fresh_context = True  # Fresh eyes for mechanical fixes without prior assumptions
     allowed_tools = ["Bash", "Read", "Edit"]
     max_turns = 20
     timeout_seconds = 300
@@ -796,48 +805,86 @@ class LintCheckPhase(Phase):
     def run(self) -> PhaseResult:
         workdir = self.context.get_working_dir()
         results = []
+        phase_config = self.config.get_phase_config(self.name)
+        max_iterations = phase_config.max_iterations
 
         # Try configured or detected commands
         lint_cmd = get_command(workdir, "lint", self.config.commands.lint)
         typecheck_cmd = get_command(workdir, "typecheck", self.config.commands.typecheck)
         format_cmd = get_command(workdir, "format")
 
-        # Run format first if available
-        if format_cmd:
-            success, stdout, stderr = run_command(workdir, format_cmd, timeout=120)
-            results.append({"command": "format", "success": success, "output": stdout + stderr})
-
-        # Run lint
-        if lint_cmd:
-            success, stdout, stderr = run_command(workdir, lint_cmd, timeout=120)
-            results.append({"command": "lint", "success": success, "output": stdout + stderr})
-
-            if not success:
-                # Try to fix lint issues with Claude
-                fix_result = self._fix_lint_issues(stdout + stderr)
-                if fix_result:
-                    # Re-run lint
-                    success, stdout, stderr = run_command(workdir, lint_cmd, timeout=120)
-                    results.append(
-                        {"command": "lint_retry", "success": success, "output": stdout + stderr}
-                    )
-
-        # Run typecheck
-        if typecheck_cmd:
-            success, stdout, stderr = run_command(workdir, typecheck_cmd, timeout=180)
-            results.append({"command": "typecheck", "success": success, "output": stdout + stderr})
-
         # If no commands found, let Claude handle it
         if not lint_cmd and not typecheck_cmd:
             return self._claude_detect_and_lint()
 
-        # Check if any command failed
-        failed = [r for r in results if not r["success"]]
-        if failed:
-            error_msg = "\n".join(f"{r['command']}: {r['output'][:500]}" for r in failed)
+        # Run format first if available (no retry needed)
+        if format_cmd:
+            success, stdout, stderr = run_command(workdir, format_cmd, timeout=120)
+            results.append({"command": "format", "success": success, "output": stdout + stderr})
+
+        # Run lint with iterative fix loop
+        lint_success = True
+        if lint_cmd:
+            for iteration in range(max_iterations):
+                success, stdout, stderr = run_command(workdir, lint_cmd, timeout=120)
+                output = stdout + stderr
+                results.append(
+                    {
+                        "command": f"lint_iter_{iteration + 1}",
+                        "success": success,
+                        "output": output,
+                    }
+                )
+
+                if success:
+                    lint_success = True
+                    break
+
+                # Try to fix lint issues with Claude
+                if iteration < max_iterations - 1:
+                    fix_result = self._fix_lint_issues(output)
+                    if not fix_result:
+                        # Claude couldn't fix, no point retrying
+                        lint_success = False
+                        break
+                else:
+                    lint_success = False
+
+        # Run typecheck with iterative fix loop
+        typecheck_success = True
+        if typecheck_cmd:
+            for iteration in range(max_iterations):
+                success, stdout, stderr = run_command(workdir, typecheck_cmd, timeout=180)
+                output = stdout + stderr
+                results.append(
+                    {
+                        "command": f"typecheck_iter_{iteration + 1}",
+                        "success": success,
+                        "output": output,
+                    }
+                )
+
+                if success:
+                    typecheck_success = True
+                    break
+
+                # Try to fix type issues with Claude
+                if iteration < max_iterations - 1:
+                    fix_result = self._fix_type_issues(output)
+                    if not fix_result:
+                        # Claude couldn't fix, no point retrying
+                        typecheck_success = False
+                        break
+                else:
+                    typecheck_success = False
+
+        # Check overall success
+        if not lint_success or not typecheck_success:
+            failed = [r for r in results if not r["success"]]
+            error_msg = "\n".join(f"{r['command']}: {r['output'][:500]}" for r in failed[-2:])
             return PhaseResult(
                 success=False,
-                error=error_msg,
+                error=f"Lint/typecheck still failing after {max_iterations} iterations:\n{error_msg}",
                 artifacts={"results": results},
             )
 
@@ -851,6 +898,25 @@ Fix the linting errors:
 {output[:2000]}
 
 Make the minimal changes needed to fix the lint errors.
+"""
+        result = self.executor.execute(
+            prompt=prompt,
+            allowed_tools=["Read", "Edit"],
+            max_turns=10,
+            working_dir=self.context.get_working_dir(),
+        )
+        self.context.add_cost(self.name, result.cost_usd)
+        return not result.is_error
+
+    def _fix_type_issues(self, output: str) -> bool:
+        """Use Claude to fix type checking issues."""
+        prompt = f"""
+Fix the type checking errors:
+
+{output[:2000]}
+
+Make the minimal changes needed to fix the type errors.
+Add type annotations, fix type mismatches, or add type: ignore comments where appropriate.
 """
         result = self.executor.execute(
             prompt=prompt,
@@ -897,16 +963,31 @@ class DocumentationPhase(Phase):
     timeout_seconds = 600
 
     def run(self) -> PhaseResult:
+        plan_path = self.context.plans_dir / f"plan-{self.context.task_name}.md"
         prompt = f"""
 Update documentation for: {self.context.task_description}
 
-1. Check if README.md needs updates
-2. Update any relevant docs/ files
-3. Ensure code comments are adequate for complex logic
-4. Update CHANGELOG.md if it exists (add to Unreleased section)
+## First, gather context by reviewing:
 
-Only make documentation changes if they are necessary.
-Do NOT create new documentation files unless they are clearly needed.
+1. **Modified files**: Run `git diff --name-only` to see what changed
+2. **Recent commits**: Run `git log --oneline -10` to understand the changes
+3. **The implementation plan**: Read {plan_path} if it exists
+4. **Existing documentation**: Check README.md, docs/ directory, CONTRIBUTING.md
+
+## Then, update documentation as needed:
+
+1. **README.md**: Update if new features, config options, or usage patterns were added
+2. **docs/ files**: Update relevant guides or API documentation
+3. **Code comments**: Ensure complex logic has adequate inline comments
+4. **CHANGELOG.md**: If it exists, add entry to Unreleased section
+5. **Configuration examples**: Update example configs if new options were added
+
+## Guidelines:
+
+- Only make documentation changes that are necessary
+- Do NOT create new documentation files unless clearly needed
+- Match the existing documentation style and format
+- Keep changes focused on what was actually implemented
 """
         phase_config = self.get_phase_config()
         result = self.executor.execute(
@@ -1069,7 +1150,7 @@ class ConflictCheckPhase(Phase):
         prompt = f"""
 Merge conflicts detected during rebase onto origin/{self.config.git.base_branch}.
 
-Conflicted files: {', '.join(conflicts)}
+Conflicted files: {", ".join(conflicts)}
 
 Steps:
 1. Run `git status` to see conflicted files
@@ -1163,10 +1244,8 @@ Return the PR URL after creation.
             if pr_url:
                 self.context.pr_url = pr_url
                 # Extract PR number
-                try:
+                with contextlib.suppress(ValueError, IndexError):
                     self.context.pr_number = int(pr_url.split("/")[-1])
-                except (ValueError, IndexError):
-                    pass
 
             return PhaseResult(
                 success=not result.is_error,

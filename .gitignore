@@ -163,3 +163,4 @@ selfassembler.yaml
 
 # Claude Code local settings
 .claude/
+logs/

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import urllib.request
 from abc import ABC, abstractmethod
@@ -104,11 +105,7 @@ class SlackChannel(NotificationChannel):
 
         if data:
             payload["attachments"] = [
-                {
-                    "fields": [
-                        {"title": k, "value": str(v), "short": True} for k, v in data.items()
-                    ]
-                }
+                {"fields": [{"title": k, "value": str(v), "short": True} for k, v in data.items()]}
             ]
 
         try:
@@ -142,12 +139,10 @@ class Notifier:
     def _send(self, message: str, level: str = "info", data: dict | None = None) -> None:
         """Send a message to all channels."""
         for channel in self.channels:
-            try:
+            with contextlib.suppress(Exception):
                 channel.send(message, level, data)
-            except Exception:
-                pass  # Don't let notification failures break workflow
 
-    def on_workflow_started(self, context: "WorkflowContext") -> None:
+    def on_workflow_started(self, context: WorkflowContext) -> None:
         """Notify that workflow has started."""
         self._send(
             f"Starting workflow: {context.task_name}\n"
@@ -161,18 +156,28 @@ class Notifier:
         """Notify that a phase has started."""
         self._send(f"Starting phase: {phase}", level="info")
 
-    def on_phase_complete(self, phase: str, result: "PhaseResult") -> None:
+    def on_phase_complete(self, phase: str, result: PhaseResult) -> None:
         """Notify that a phase completed successfully."""
         cost_str = f" (${result.cost_usd:.2f})" if result.cost_usd > 0 else ""
         self._send(f"Phase complete: {phase}{cost_str}", level="success")
 
-    def on_phase_failed(self, phase: str, result: "PhaseResult") -> None:
+    def on_phase_failed(self, phase: str, result: PhaseResult, will_retry: bool = False) -> None:
         """Notify that a phase failed."""
         error_preview = result.error[:200] if result.error else "Unknown error"
+        retry_msg = " (will retry)" if will_retry else ""
+        level = "warning" if will_retry else "error"
         self._send(
-            f"Phase failed: {phase}\nError: {error_preview}",
-            level="error",
-            data={"phase": phase, "error": result.error},
+            f"Phase failed: {phase}{retry_msg}\nError: {error_preview}",
+            level=level,
+            data={"phase": phase, "error": result.error, "will_retry": will_retry},
+        )
+
+    def on_phase_retry(self, phase: str, attempt: int, max_retries: int) -> None:
+        """Notify that a phase is being retried."""
+        self._send(
+            f"Retrying phase: {phase} (attempt {attempt + 1}/{max_retries + 1})",
+            level="info",
+            data={"phase": phase, "attempt": attempt, "max_retries": max_retries},
         )
 
     def on_approval_needed(self, phase: str, artifacts: dict[str, Any]) -> None:
@@ -186,13 +191,13 @@ class Notifier:
             data={"phase": phase, "artifacts": artifacts},
         )
 
-    def on_workflow_complete(self, context: "WorkflowContext") -> None:
+    def on_workflow_complete(self, context: WorkflowContext) -> None:
         """Notify that workflow completed successfully."""
         message = f"""
 Workflow complete: {context.task_name}
 
-PR: {context.pr_url or 'Not created'}
-Branch: {context.branch_name or 'N/A'}
+PR: {context.pr_url or "Not created"}
+Branch: {context.branch_name or "N/A"}
 Total cost: ${context.total_cost_usd:.2f}
 Duration: {context.elapsed_time():.0f}s
 
@@ -210,7 +215,7 @@ Ready for human review.
             },
         )
 
-    def on_workflow_failed(self, context: "WorkflowContext", error: Exception) -> None:
+    def on_workflow_failed(self, context: WorkflowContext, error: Exception) -> None:
         """Notify that workflow failed."""
         message = f"""
 Workflow failed: {context.task_name}
@@ -233,7 +238,7 @@ Resume with: selfassembler --resume {context.checkpoint_id}
             },
         )
 
-    def on_budget_warning(self, context: "WorkflowContext", threshold: float = 0.8) -> None:
+    def on_budget_warning(self, context: WorkflowContext, threshold: float = 0.8) -> None:
         """Notify when budget usage exceeds threshold."""
         usage = context.total_cost_usd / context.budget_limit_usd
         if usage >= threshold:
@@ -254,7 +259,7 @@ Resume with: selfassembler --resume {context.checkpoint_id}
 
     def on_stream_event(
         self,
-        event: "StreamEvent",
+        event: StreamEvent,
         show_tool_calls: bool = True,
         truncate_length: int = 200,
     ) -> None:
@@ -292,7 +297,6 @@ def create_stream_callback(
     truncate_length: int = 200,
 ) -> Any:
     """Create a stream callback function from a notifier."""
-    from selfassembler.executor import StreamEvent
 
     def callback(event: StreamEvent) -> None:
         notifier.on_stream_event(event, show_tool_calls, truncate_length)

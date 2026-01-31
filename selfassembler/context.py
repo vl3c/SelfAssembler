@@ -141,7 +141,7 @@ class WorkflowContext:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "WorkflowContext":
+    def from_dict(cls, data: dict[str, Any]) -> WorkflowContext:
         """Create context from a serialized dictionary."""
         return cls(
             task_description=data["task_description"],

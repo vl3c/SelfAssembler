@@ -1,6 +1,5 @@
 """Tests for workflow phases."""
 
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -8,7 +7,7 @@ import pytest
 
 from selfassembler.config import WorkflowConfig
 from selfassembler.context import WorkflowContext
-from selfassembler.executor import ExecutionResult, MockClaudeExecutor
+from selfassembler.executor import MockClaudeExecutor
 from selfassembler.phases import (
     PHASE_CLASSES,
     PHASE_NAMES,
@@ -18,7 +17,6 @@ from selfassembler.phases import (
     PlanReviewPhase,
     PreflightPhase,
     ResearchPhase,
-    SetupPhase,
 )
 
 
@@ -56,7 +54,7 @@ class TestPhaseRegistry:
             "pr_creation",
             "pr_self_review",
         ]
-        assert PHASE_NAMES == expected_order
+        assert expected_order == PHASE_NAMES
 
 
 class TestPreflightPhase:

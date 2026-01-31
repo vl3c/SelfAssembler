@@ -11,9 +11,9 @@ from selfassembler.config import WorkflowConfig
 from selfassembler.errors import (
     ApprovalTimeoutError,
     BudgetExceededError,
-    SelfAssemblerError,
     ContainerRequiredError,
     PhaseFailedError,
+    SelfAssemblerError,
 )
 from selfassembler.orchestrator import Orchestrator, create_orchestrator
 from selfassembler.phases import PHASE_NAMES
@@ -138,6 +138,11 @@ Examples:
         metavar="PHASE",
         help="Grant approval for a phase",
     )
+    util_group.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what phases would run without executing them",
+    )
 
     # Output
     output_group = parser.add_argument_group("output")
@@ -236,6 +241,89 @@ def handle_list_phases() -> int:
     return 0
 
 
+def handle_dry_run(config: WorkflowConfig, skip_to: str | None = None) -> int:
+    """Display phases that would run without executing them.
+
+    Shows phase name, approval gate status, estimated cost, and running total.
+    Respects --skip-to and disabled phases configuration.
+    """
+    from selfassembler.phases import PHASE_CLASSES, PHASE_NAMES
+
+    # Determine start index based on skip_to
+    start_index = 0
+    if skip_to:
+        try:
+            start_index = PHASE_NAMES.index(skip_to)
+        except ValueError:
+            print(f"Unknown phase: {skip_to}", file=sys.stderr)
+            return 1
+
+    # Collect phases that would run
+    phases_to_run: list[dict] = []
+    for i, phase_class in enumerate(PHASE_CLASSES):
+        # Skip phases before skip_to
+        if i < start_index:
+            continue
+
+        # Get phase config to check if enabled
+        phase_config = config.get_phase_config(phase_class.name)
+        if not phase_config.enabled:
+            continue
+
+        # Determine effective approval gate status
+        # Phase has a gate if approvals are enabled AND the gate is configured
+        # to True in config.approvals.gates (this allows optionally enabling
+        # gates like plan_review even if the phase class doesn't default to it)
+        has_approval_gate = False
+        if config.approvals.enabled:
+            phase_name_normalized = phase_class.name.replace("-", "_")
+            gate_config = getattr(config.approvals.gates, phase_name_normalized, None)
+            if gate_config is True:
+                has_approval_gate = True
+
+        phases_to_run.append(
+            {
+                "name": phase_class.name,
+                "approval_gate": has_approval_gate,
+                "estimated_cost": phase_config.estimated_cost,
+            }
+        )
+
+    # Handle case where no phases would run
+    if not phases_to_run:
+        print("No phases would run with the current configuration.")
+        return 0
+
+    # Print header
+    print("Dry-run: Phases that would execute\n")
+    print(f" {'#':>2}  {'Phase':<20} {'Approval Gate':<14} {'Est. Cost':<10} {'Running Total':<12}")
+    print("─" * 65)
+
+    # Print each phase
+    running_total = 0.0
+    for idx, phase in enumerate(phases_to_run, 1):
+        running_total += phase["estimated_cost"]
+        approval_str = "Yes" if phase["approval_gate"] else "No"
+        print(
+            f" {idx:>2}  {phase['name']:<20} {approval_str:<14} "
+            f"${phase['estimated_cost']:<9.2f} ${running_total:<11.2f}"
+        )
+
+    # Print footer
+    print("─" * 65)
+    print(f"Total estimated cost: ${running_total:.2f}")
+    print(f"Budget limit: ${config.budget_limit_usd:.2f}")
+
+    # Show budget warning if total exceeds budget
+    if running_total > config.budget_limit_usd:
+        print(
+            f"\n⚠ Warning: Estimated cost (${running_total:.2f}) "
+            f"exceeds budget limit (${config.budget_limit_usd:.2f})"
+        )
+
+    return 0
+
+
 def handle_init_config(path: Path | None = None) -> int:
     """Create a default configuration file."""
     config = WorkflowConfig()
@@ -314,6 +402,10 @@ def main(args: list[str] | None = None) -> int:
     # Handle approval
     if parsed.approve:
         return handle_approve(parsed.approve, plans_dir)
+
+    # Handle dry-run
+    if parsed.dry_run:
+        return handle_dry_run(config, parsed.skip_to)
 
     # Handle resume
     if parsed.resume:

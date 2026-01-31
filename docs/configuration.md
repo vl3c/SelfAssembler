@@ -224,6 +224,20 @@ notifications:
     webhook_url: null  # "https://hooks.slack.com/services/..."
 
 # =============================================================================
+# Rules / Guidelines
+# =============================================================================
+
+# Rules written to CLAUDE.md in the worktree to guide Claude's behavior
+rules:
+  # IDs of builtin rules to enable
+  # Available: no-signature, no-emojis, no-yapping
+  enabled_rules:
+    - "no-signature"
+
+  # Additional custom rule descriptions
+  custom_rules: []
+
+# =============================================================================
 # File Copying
 # =============================================================================
 
@@ -288,6 +302,35 @@ phases:
   pr_self_review:
     enabled: false  # Skip self-review
 ```
+
+## Rules and Guidelines
+
+SelfAssembler can write a `CLAUDE.md` file to the worktree containing rules that Claude should follow. This file is automatically created after the setup phase.
+
+### Builtin Rules
+
+| Rule ID | Description |
+|---------|-------------|
+| `no-signature` | Do not add Co-Authored-By, signature lines, or AI attribution to commits, PRs, or code comments |
+| `no-emojis` | Do not use emojis in code, commits, or documentation |
+| `no-yapping` | Be concise, avoid excessive explanations or verbose output |
+
+### Configuration
+
+```yaml
+rules:
+  # Enable specific builtin rules by ID
+  enabled_rules:
+    - "no-signature"
+    - "no-emojis"
+
+  # Add custom rules (free-form descriptions)
+  custom_rules:
+    - "Always use type hints in Python code"
+    - "Prefer functional components in React"
+```
+
+By default, only `no-signature` is enabled.
 
 ## Estimated Costs
 

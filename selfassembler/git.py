@@ -137,9 +137,7 @@ class GitManager:
             raise WorktreeError(f"Worktree already exists: {worktree_path}")
 
         try:
-            self._run(
-                ["worktree", "add", "-b", branch_name, str(worktree_path), base_branch]
-            )
+            self._run(["worktree", "add", "-b", branch_name, str(worktree_path), base_branch])
             return worktree_path
         except GitOperationError as e:
             raise WorktreeError(f"Failed to create worktree: {e}") from e
@@ -223,7 +221,7 @@ class GitManager:
         if author:
             args.extend(["--author", author])
 
-        result = self._run(args, cwd=cwd)
+        self._run(args, cwd=cwd)
         # Get the commit hash
         hash_result = self._run(["rev-parse", "HEAD"], cwd=cwd)
         return hash_result.stdout.strip()
