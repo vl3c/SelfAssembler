@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from claudonomous.config import WorkflowConfig
+from selfassembler.config import WorkflowConfig
 
 
 class TestWorkflowConfig:

@@ -1,6 +1,6 @@
-# Dockerfile for Claudonomous
-# Build: docker build -t claudonomous .
-# Run: docker run -v /project:/workspace -e ANTHROPIC_API_KEY claudonomous "task"
+# Dockerfile for SelfAssembler
+# Build: docker build -t selfassembler .
+# Run: docker run -v /project:/workspace -e ANTHROPIC_API_KEY selfassembler "task"
 
 FROM python:3.12-slim
 
@@ -29,9 +29,9 @@ RUN useradd -m -s /bin/bash claude
 USER claude
 WORKDIR /home/claude
 
-# Install claudonomous
-COPY --chown=claude:claude . /home/claude/claudonomous
-RUN pip install --user --no-cache-dir /home/claude/claudonomous
+# Install selfassembler
+COPY --chown=claude:claude . /home/claude/selfassembler
+RUN pip install --user --no-cache-dir /home/claude/selfassembler
 
 # Add local bin to PATH
 ENV PATH="/home/claude/.local/bin:${PATH}"
@@ -40,9 +40,9 @@ ENV PATH="/home/claude/.local/bin:${PATH}"
 WORKDIR /workspace
 
 # Set git config for commits
-RUN git config --global user.email "claude@claudonomous.local" \
-    && git config --global user.name "Claudonomous"
+RUN git config --global user.email "claude@selfassembler.local" \
+    && git config --global user.name "SelfAssembler"
 
 # Entrypoint
-ENTRYPOINT ["python", "-m", "claudonomous"]
+ENTRYPOINT ["python", "-m", "selfassembler"]
 CMD ["--help"]

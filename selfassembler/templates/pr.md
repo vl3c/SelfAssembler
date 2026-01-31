@@ -15,4 +15,4 @@
 {{ notes }}
 
 ---
-Generated with [Claudonomous](https://github.com/claudonomous/claudonomous)
+Generated with [SelfAssembler](https://github.com/selfassembler/selfassembler)

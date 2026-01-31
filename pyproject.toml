@@ -3,14 +3,14 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "claudonomous"
+name = "selfassembler"
 version = "0.1.0"
 description = "Autonomous multi-phase workflow orchestrator for Claude Code CLI"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
 authors = [
-    {name = "Claudonomous Contributors"}
+    {name = "SelfAssembler Contributors"}
 ]
 keywords = ["claude", "automation", "workflow", "cli", "ai"]
 classifiers = [
@@ -39,18 +39,18 @@ dev = [
 ]
 
 [project.scripts]
-claudonomous = "claudonomous.cli:main"
+selfassembler = "selfassembler.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/claudonomous/claudonomous"
-Repository = "https://github.com/claudonomous/claudonomous"
+Homepage = "https://github.com/selfassembler/selfassembler"
+Repository = "https://github.com/selfassembler/selfassembler"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["claudonomous*"]
+include = ["selfassembler*"]
 
 [tool.setuptools.package-data]
-claudonomous = ["templates/**/*"]
+selfassembler = ["templates/**/*"]
 
 [tool.ruff]
 line-length = 100

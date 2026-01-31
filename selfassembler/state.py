@@ -9,10 +9,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from claudonomous.errors import CheckpointError
+from selfassembler.errors import CheckpointError
 
 if TYPE_CHECKING:
-    from claudonomous.context import WorkflowContext
+    from selfassembler.context import WorkflowContext
 
 
 class StateStore:
@@ -34,7 +34,7 @@ class StateStore:
             base = Path(xdg_state)
         else:
             base = Path.home() / ".local" / "state"
-        return base / "claudonomous"
+        return base / "selfassembler"
 
     def save(self, key: str, data: dict[str, Any]) -> Path:
         """Save data to the state store."""
@@ -139,7 +139,7 @@ class CheckpointManager:
         Raises:
             CheckpointError: If checkpoint doesn't exist or is invalid
         """
-        from claudonomous.context import WorkflowContext
+        from selfassembler.context import WorkflowContext
 
         data = self.store.load(checkpoint_id)
         if data is None:

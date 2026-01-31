@@ -2,7 +2,7 @@
 
 import pytest
 
-from claudonomous.cli import create_parser, generate_task_name
+from selfassembler.cli import create_parser, generate_task_name
 
 
 class TestCreateParser:

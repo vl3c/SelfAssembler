@@ -1,4 +1,4 @@
-"""Configuration models for Claudonomous."""
+"""Configuration models for SelfAssembler."""
 
 from __future__ import annotations
 
@@ -138,7 +138,7 @@ class CommandsConfig(BaseModel):
 
 
 class WorkflowConfig(BaseModel):
-    """Main configuration for Claudonomous workflows."""
+    """Main configuration for SelfAssembler workflows."""
 
     budget_limit_usd: float = Field(default=15.0, ge=0.0)
     autonomous_mode: bool = Field(default=False)
@@ -158,10 +158,10 @@ class WorkflowConfig(BaseModel):
         if config_path is None:
             # Search for config file in standard locations
             search_paths = [
-                Path("claudonomous.yaml"),
-                Path("claudonomous.yml"),
-                Path(".claudonomous.yaml"),
-                Path(".claudonomous.yml"),
+                Path("selfassembler.yaml"),
+                Path("selfassembler.yml"),
+                Path(".selfassembler.yaml"),
+                Path(".selfassembler.yml"),
             ]
             for path in search_paths:
                 if path.exists():

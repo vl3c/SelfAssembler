@@ -12,7 +12,7 @@ TASK_NAME="$3"
 
 # Show usage if insufficient arguments
 if [ -z "$TASK" ] || [ -z "$TASK_NAME" ]; then
-    echo "Claudonomous - Autonomous Mode Runner"
+    echo "SelfAssembler - Autonomous Mode Runner"
     echo ""
     echo "Usage: ./run-autonomous.sh <project-dir> <task> <task-name>"
     echo ""
@@ -58,14 +58,14 @@ if ! command -v docker &> /dev/null; then
 fi
 
 # Check if image exists, build if not
-if ! docker image inspect claudonomous:latest &> /dev/null; then
-    echo "Building claudonomous Docker image..."
+if ! docker image inspect selfassembler:latest &> /dev/null; then
+    echo "Building selfassembler Docker image..."
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    docker build -t claudonomous:latest "$SCRIPT_DIR"
+    docker build -t selfassembler:latest "$SCRIPT_DIR"
     echo ""
 fi
 
-echo "=== Claudonomous Autonomous Mode ==="
+echo "=== SelfAssembler Autonomous Mode ==="
 echo "Project: $PROJECT_DIR"
 echo "Task: $TASK"
 echo "Name: $TASK_NAME"
@@ -79,7 +79,7 @@ echo ""
 
 # Run the container
 docker run --rm -it \
-    --name "claudonomous-${TASK_NAME}" \
+    --name "selfassembler-${TASK_NAME}" \
     \
     `# Mount project directory as /workspace (read-write)` \
     -v "${PROJECT_DIR}:/workspace" \
@@ -102,7 +102,7 @@ docker run --rm -it \
     --security-opt="no-new-privileges:true" \
     --cap-drop=ALL \
     \
-    claudonomous:latest \
+    selfassembler:latest \
     "$TASK" \
     --name "$TASK_NAME" \
     --autonomous \

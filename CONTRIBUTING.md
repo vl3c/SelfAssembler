@@ -1,6 +1,6 @@
-# Contributing to Claudonomous
+# Contributing to SelfAssembler
 
-Thank you for your interest in contributing to Claudonomous! This document provides guidelines and information for contributors.
+Thank you for your interest in contributing to SelfAssembler! This document provides guidelines and information for contributors.
 
 ## Table of Contents
 
@@ -39,8 +39,8 @@ Please be respectful and constructive in all interactions. We're building someth
 
 ```bash
 # Clone your fork
-git clone https://github.com/YOUR_USERNAME/claudonomous.git
-cd claudonomous
+git clone https://github.com/YOUR_USERNAME/selfassembler.git
+cd selfassembler
 
 # Create a virtual environment
 python -m venv venv
@@ -60,7 +60,7 @@ pytest
 ruff check .
 
 # Check types
-mypy claudonomous/
+mypy selfassembler/
 ```
 
 ## Making Changes
@@ -119,7 +119,7 @@ pytest -v
 pytest tests/test_phases.py
 
 # Run with coverage
-pytest --cov=claudonomous --cov-report=html
+pytest --cov=selfassembler --cov-report=html
 
 # Run only fast tests (no integration)
 pytest -m "not integration"
@@ -137,8 +137,8 @@ Example test:
 
 ```python
 import pytest
-from claudonomous.context import WorkflowContext
-from claudonomous.errors import BudgetExceededError
+from selfassembler.context import WorkflowContext
+from selfassembler.errors import BudgetExceededError
 
 class TestWorkflowContext:
     @pytest.fixture

@@ -1,6 +1,6 @@
 # Troubleshooting Guide
 
-Common issues and their solutions when using Claudonomous.
+Common issues and their solutions when using SelfAssembler.
 
 ## Preflight Failures
 
@@ -61,15 +61,15 @@ git pull origin main
 
 1. **Resume with higher budget**:
    ```bash
-   claudonomous --resume checkpoint_xxx --budget 25.0
+   selfassembler --resume checkpoint_xxx --budget 25.0
    ```
 
 2. **Skip expensive phases**:
    ```bash
-   claudonomous --resume checkpoint_xxx --skip-to commit_prep
+   selfassembler --resume checkpoint_xxx --skip-to commit_prep
    ```
 
-3. **Increase default budget** in `claudonomous.yaml`:
+3. **Increase default budget** in `selfassembler.yaml`:
    ```yaml
    budget_limit_usd: 25.0
    ```
@@ -95,8 +95,8 @@ phases:
 
 1. **Grant approval and resume**:
    ```bash
-   claudonomous --approve planning --plans-dir ./plans
-   claudonomous --resume checkpoint_xxx
+   selfassembler --approve planning --plans-dir ./plans
+   selfassembler --resume checkpoint_xxx
    ```
 
 2. **Increase timeout**:
@@ -107,7 +107,7 @@ phases:
 
 3. **Disable approvals**:
    ```bash
-   claudonomous "Task" --no-approvals
+   selfassembler "Task" --no-approvals
    ```
 
 ## Git Issues
@@ -136,7 +136,7 @@ git worktree prune
 2. Resolve conflicts manually
 3. Resume the workflow:
    ```bash
-   claudonomous --resume checkpoint_xxx --skip-to pr_creation
+   selfassembler --resume checkpoint_xxx --skip-to pr_creation
    ```
 
 ### Branch push failed
@@ -197,7 +197,7 @@ git worktree prune
 
 Or bypass (not recommended):
 ```bash
-export CLAUDONOMOUS_ALLOW_HOST_AUTONOMOUS="I_ACCEPT_THE_RISK"
+export SELFASSEMBLER_ALLOW_HOST_AUTONOMOUS="I_ACCEPT_THE_RISK"
 ```
 
 ### Docker build fails
@@ -210,7 +210,7 @@ export CLAUDONOMOUS_ALLOW_HOST_AUTONOMOUS="I_ACCEPT_THE_RISK"
 2. Check Dockerfile syntax
 3. Try building with no cache:
    ```bash
-   docker build --no-cache -t claudonomous .
+   docker build --no-cache -t selfassembler .
    ```
 
 ## Test Execution Issues
@@ -251,10 +251,10 @@ commands:
 
 1. **List available checkpoints**:
    ```bash
-   claudonomous --list-checkpoints
+   selfassembler --list-checkpoints
    ```
 
-2. **Check checkpoint directory**: `~/.local/state/claudonomous/`
+2. **Check checkpoint directory**: `~/.local/state/selfassembler/`
 
 3. **Start fresh**: Run the workflow from the beginning
 
@@ -264,7 +264,7 @@ commands:
 
 **Solution**: Delete the corrupted checkpoint and start fresh:
 ```bash
-rm ~/.local/state/claudonomous/checkpoint_xxx.json
+rm ~/.local/state/selfassembler/checkpoint_xxx.json
 ```
 
 ## Notification Issues
@@ -296,13 +296,13 @@ rm ~/.local/state/claudonomous/checkpoint_xxx.json
 
 Run with verbose output:
 ```bash
-claudonomous "Task" --name task --verbose
+selfassembler "Task" --name task --verbose
 ```
 
 ### Check Logs
 
 - Workflow artifacts are in `./plans/`
-- Checkpoints are in `~/.local/state/claudonomous/`
+- Checkpoints are in `~/.local/state/selfassembler/`
 
 ### Report Issues
 
@@ -310,8 +310,8 @@ If you encounter a bug:
 
 1. Check existing issues on GitHub
 2. Include:
-   - Claudonomous version
+   - SelfAssembler version
    - Python version
    - Error message
    - Steps to reproduce
-3. Open an issue at https://github.com/claudonomous/claudonomous/issues
+3. Open an issue at https://github.com/selfassembler/selfassembler/issues

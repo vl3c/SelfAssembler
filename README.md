@@ -1,11 +1,11 @@
-# Claudonomous
+# SelfAssembler
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **Autonomous multi-phase workflow orchestrator for Claude Code CLI.**
 
-Claudonomous automates the complete software development lifecycle by orchestrating Claude Code through 16 distinct phases: environment validation, git worktree setup, research, planning, implementation, testing with fix loops, code review, documentation, commits, and PR creation with self-review.
+SelfAssembler automates the complete software development lifecycle by orchestrating Claude Code through 16 distinct phases: environment validation, git worktree setup, research, planning, implementation, testing with fix loops, code review, documentation, commits, and PR creation with self-review.
 
 ## Table of Contents
 
@@ -39,14 +39,14 @@ Claudonomous automates the complete software development lifecycle by orchestrat
 ### From PyPI (when published)
 
 ```bash
-pip install claudonomous
+pip install selfassembler
 ```
 
 ### From Source
 
 ```bash
-git clone https://github.com/claudonomous/claudonomous.git
-cd claudonomous
+git clone https://github.com/selfassembler/selfassembler.git
+cd selfassembler
 pip install -e .
 ```
 
@@ -73,14 +73,14 @@ pip install -e .
 
 ```bash
 # Run a task with approval gates (default)
-claudonomous "Add user authentication" --name auth-feature
+selfassembler "Add user authentication" --name auth-feature
 
 # Review the generated plan at ./plans/plan-auth-feature.md
 # Then approve to continue:
 touch ./plans/.approved_planning
 
 # Or run without approval gates for simpler tasks
-claudonomous "Fix login bug" --name fix-login --no-approvals
+selfassembler "Fix login bug" --name fix-login --no-approvals
 ```
 
 ## Usage
@@ -89,47 +89,47 @@ claudonomous "Fix login bug" --name fix-login --no-approvals
 
 ```bash
 # Start a new task
-claudonomous "Add user authentication" --name auth-feature
+selfassembler "Add user authentication" --name auth-feature
 
 # Use an existing plan file
-claudonomous @plans/my-plan.md --skip-to implementation
+selfassembler @plans/my-plan.md --skip-to implementation
 
 # Set a custom budget
-claudonomous "Complex feature" --name feature --budget 25.0
+selfassembler "Complex feature" --name feature --budget 25.0
 
 # Specify repository path
-claudonomous "Fix bug" --name bugfix --repo /path/to/project
+selfassembler "Fix bug" --name bugfix --repo /path/to/project
 ```
 
 ### Utility Commands
 
 ```bash
 # List all workflow phases
-claudonomous --list-phases
+selfassembler --list-phases
 
 # List available checkpoints
-claudonomous --list-checkpoints
+selfassembler --list-checkpoints
 
 # Create default configuration file
-claudonomous --init-config
+selfassembler --init-config
 
 # Grant approval for a phase
-claudonomous --approve planning --plans-dir ./plans
+selfassembler --approve planning --plans-dir ./plans
 ```
 
 ### Resume & Recovery
 
 ```bash
 # Resume from a checkpoint
-claudonomous --resume checkpoint_abc123
+selfassembler --resume checkpoint_abc123
 
 # Skip to a specific phase
-claudonomous "Task" --name task --skip-to implementation
+selfassembler "Task" --name task --skip-to implementation
 ```
 
 ## Workflow Phases
 
-Claudonomous executes 16 phases in sequence:
+SelfAssembler executes 16 phases in sequence:
 
 | # | Phase | Description | Approval Gate |
 |---|-------|-------------|---------------|
@@ -152,7 +152,7 @@ Claudonomous executes 16 phases in sequence:
 
 ## Configuration
 
-Create `claudonomous.yaml` in your project root:
+Create `selfassembler.yaml` in your project root:
 
 ```yaml
 # Budget limit in USD for the entire workflow
@@ -198,7 +198,7 @@ notifications:
     url: "https://your-webhook.example.com/notify"
 ```
 
-See [`claudonomous.yaml.example`](claudonomous.yaml.example) for all available options.
+See [`selfassembler.yaml.example`](selfassembler.yaml.example) for all available options.
 
 ## Operating Modes
 
@@ -213,7 +213,7 @@ See [`claudonomous.yaml.example`](claudonomous.yaml.example) for all available o
 Uses Claude's permission system with tool whitelists. Pauses at approval gates for human review.
 
 ```bash
-claudonomous "Add feature" --name feature
+selfassembler "Add feature" --name feature
 ```
 
 ### No Approvals Mode
@@ -221,7 +221,7 @@ claudonomous "Add feature" --name feature
 Skips approval gates but still uses Claude's permission prompts for dangerous operations.
 
 ```bash
-claudonomous "Fix bug" --name bugfix --no-approvals
+selfassembler "Fix bug" --name bugfix --no-approvals
 ```
 
 ### Autonomous Mode (Requires Docker)
@@ -230,7 +230,7 @@ Grants Claude full system access. **Must run in a container** for safety:
 
 ```bash
 # Build the Docker image
-docker build -t claudonomous .
+docker build -t selfassembler .
 
 # Run with helper script (recommended)
 ./run-autonomous.sh ~/myproject "Add auth system" auth-system
@@ -242,7 +242,7 @@ docker run --rm -it \
   -v ~/.ssh:/home/claude/.ssh:ro \
   -e ANTHROPIC_API_KEY \
   -e GH_TOKEN \
-  claudonomous:latest \
+  selfassembler:latest \
   "Add auth system" \
   --name auth-system \
   --autonomous
@@ -250,17 +250,17 @@ docker run --rm -it \
 
 ## Checkpoints & Recovery
 
-Claudonomous automatically creates checkpoints at each phase transition. If a workflow fails or is interrupted, you can resume from where it left off:
+SelfAssembler automatically creates checkpoints at each phase transition. If a workflow fails or is interrupted, you can resume from where it left off:
 
 ```bash
 # List available checkpoints
-claudonomous --list-checkpoints
+selfassembler --list-checkpoints
 
 # Resume from a checkpoint
-claudonomous --resume checkpoint_abc123
+selfassembler --resume checkpoint_abc123
 ```
 
-Checkpoints are stored in `~/.local/state/claudonomous/` and include:
+Checkpoints are stored in `~/.local/state/selfassembler/` and include:
 - Complete workflow context
 - Cost tracking data
 - Completed phases
@@ -304,8 +304,8 @@ notifications:
 
 ```bash
 # Clone and install with dev dependencies
-git clone https://github.com/claudonomous/claudonomous.git
-cd claudonomous
+git clone https://github.com/selfassembler/selfassembler.git
+cd selfassembler
 pip install -e ".[dev]"
 ```
 
@@ -316,7 +316,7 @@ pip install -e ".[dev]"
 pytest
 
 # Run with coverage
-pytest --cov=claudonomous
+pytest --cov=selfassembler
 
 # Run specific test file
 pytest tests/test_phases.py -v
@@ -329,7 +329,7 @@ pytest tests/test_phases.py -v
 ruff check .
 
 # Type checking
-mypy claudonomous/
+mypy selfassembler/
 
 # Format code
 ruff format .

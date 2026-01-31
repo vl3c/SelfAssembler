@@ -9,8 +9,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from claudonomous.context import WorkflowContext
-    from claudonomous.phases import PhaseResult
+    from selfassembler.context import WorkflowContext
+    from selfassembler.phases import PhaseResult
 
 
 class NotificationChannel(ABC):
@@ -218,7 +218,7 @@ Phase: {context.current_phase}
 Error: {error}
 Cost so far: ${context.total_cost_usd:.2f}
 
-Resume with: claudonomous --resume {context.checkpoint_id}
+Resume with: selfassembler --resume {context.checkpoint_id}
 """
         self._send(
             message.strip(),

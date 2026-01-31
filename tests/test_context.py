@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from claudonomous.context import WorkflowContext
-from claudonomous.errors import BudgetExceededError
+from selfassembler.context import WorkflowContext
+from selfassembler.errors import BudgetExceededError
 
 
 class TestWorkflowContext:

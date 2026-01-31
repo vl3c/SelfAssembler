@@ -7,21 +7,21 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from claudonomous.context import WorkflowContext
-from claudonomous.errors import (
+from selfassembler.context import WorkflowContext
+from selfassembler.errors import (
     ApprovalTimeoutError,
     BudgetExceededError,
     ContainerRequiredError,
     PhaseFailedError,
 )
-from claudonomous.executor import ClaudeExecutor
-from claudonomous.git import GitManager
-from claudonomous.notifications import Notifier, create_notifier_from_config
-from claudonomous.phases import PHASE_CLASSES, PHASE_NAMES, Phase, PhaseResult
-from claudonomous.state import ApprovalStore, CheckpointManager, StateStore
+from selfassembler.executor import ClaudeExecutor
+from selfassembler.git import GitManager
+from selfassembler.notifications import Notifier, create_notifier_from_config
+from selfassembler.phases import PHASE_CLASSES, PHASE_NAMES, Phase, PhaseResult
+from selfassembler.state import ApprovalStore, CheckpointManager, StateStore
 
 if TYPE_CHECKING:
-    from claudonomous.config import WorkflowConfig
+    from selfassembler.config import WorkflowConfig
 
 
 class Orchestrator:
@@ -76,7 +76,7 @@ class Orchestrator:
             pass
 
         # Check 3: Environment variable override (for testing)
-        override = os.environ.get("CLAUDONOMOUS_ALLOW_HOST_AUTONOMOUS") == "I_ACCEPT_THE_RISK"
+        override = os.environ.get("SELFASSEMBLER_ALLOW_HOST_AUTONOMOUS") == "I_ACCEPT_THE_RISK"
 
         if not (in_docker or in_cgroup or override):
             print(
@@ -96,11 +96,11 @@ class Orchestrator:
 ║                                                                  ║
 ║  Or build and run manually:                                      ║
 ║                                                                  ║
-║    docker build -t claudonomous .                                ║
-║    docker run -v /project:/workspace claudonomous "task"         ║
+║    docker build -t selfassembler .                                ║
+║    docker run -v /project:/workspace selfassembler "task"         ║
 ║                                                                  ║
 ║  To bypass (NOT RECOMMENDED):                                    ║
-║    export CLAUDONOMOUS_ALLOW_HOST_AUTONOMOUS="I_ACCEPT_THE_RISK" ║
+║    export SELFASSEMBLER_ALLOW_HOST_AUTONOMOUS="I_ACCEPT_THE_RISK" ║
 ║                                                                  ║
 ╚══════════════════════════════════════════════════════════════════╝
 """,
@@ -113,7 +113,7 @@ class Orchestrator:
                 """
 ⚠️  WARNING: Running autonomous mode on HOST SYSTEM
 ⚠️  Claude has full access to your files and system
-⚠️  You accepted this risk via CLAUDONOMOUS_ALLOW_HOST_AUTONOMOUS
+⚠️  You accepted this risk via SELFASSEMBLER_ALLOW_HOST_AUTONOMOUS
 """,
                 file=sys.stderr,
             )
@@ -308,7 +308,7 @@ class Orchestrator:
         Returns:
             An Orchestrator ready to resume the workflow
         """
-        from claudonomous.config import WorkflowConfig
+        from selfassembler.config import WorkflowConfig
 
         checkpoint_manager = CheckpointManager()
         context = checkpoint_manager.load_checkpoint(checkpoint_id)
@@ -358,7 +358,7 @@ def create_orchestrator(
     Returns:
         A configured Orchestrator
     """
-    from claudonomous.config import WorkflowConfig
+    from selfassembler.config import WorkflowConfig
 
     if repo_path is None:
         repo_path = Path.cwd()

@@ -1,1 +1,1 @@
-"""Tests for Claudonomous."""
+"""Tests for SelfAssembler."""

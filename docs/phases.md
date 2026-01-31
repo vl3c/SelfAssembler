@@ -1,6 +1,6 @@
 # Workflow Phases
 
-Claudonomous executes a 16-phase workflow to automate the complete development lifecycle. This document describes each phase in detail.
+SelfAssembler executes a 16-phase workflow to automate the complete development lifecycle. This document describes each phase in detail.
 
 ## Phase Overview
 
@@ -327,7 +327,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 - How tested
 
 ---
-Generated with Claudonomous
+Generated with SelfAssembler
 ```
 
 ---
@@ -354,7 +354,7 @@ Generated with Claudonomous
 
 Skip to a specific phase:
 ```bash
-claudonomous "Task" --skip-to implementation
+selfassembler "Task" --skip-to implementation
 ```
 
 ### Disabling Phases

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from claudonomous.commands import (
+from selfassembler.commands import (
     detect_all_project_types,
     detect_project_type,
     get_all_commands,

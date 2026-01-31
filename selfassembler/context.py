@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from claudonomous.errors import BudgetExceededError
+from selfassembler.errors import BudgetExceededError
 
 
 @dataclass

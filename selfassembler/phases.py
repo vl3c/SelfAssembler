@@ -1,4 +1,4 @@
-"""Workflow phases for Claudonomous."""
+"""Workflow phases for SelfAssembler."""
 
 from __future__ import annotations
 
@@ -9,14 +9,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from claudonomous.commands import get_command, parse_test_output, run_command
-from claudonomous.errors import PreflightFailedError
-from claudonomous.git import GitManager, copy_config_files
+from selfassembler.commands import get_command, parse_test_output, run_command
+from selfassembler.errors import PreflightFailedError
+from selfassembler.git import GitManager, copy_config_files
 
 if TYPE_CHECKING:
-    from claudonomous.config import WorkflowConfig
-    from claudonomous.context import WorkflowContext
-    from claudonomous.executor import ClaudeExecutor
+    from selfassembler.config import WorkflowConfig
+    from selfassembler.context import WorkflowContext
+    from selfassembler.executor import ClaudeExecutor
 
 
 @dataclass
@@ -1048,7 +1048,7 @@ gh pr create --title "<title>" --body "$(cat <<'EOF'
 <any additional context>
 
 ---
-Generated with Claudonomous
+Generated with SelfAssembler
 EOF
 )"
 ```

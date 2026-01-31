@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from claudonomous.context import WorkflowContext
-from claudonomous.errors import CheckpointError
-from claudonomous.state import ApprovalStore, CheckpointManager, StateStore
+from selfassembler.context import WorkflowContext
+from selfassembler.errors import CheckpointError
+from selfassembler.state import ApprovalStore, CheckpointManager, StateStore
 
 
 class TestStateStore:

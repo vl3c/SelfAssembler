@@ -6,10 +6,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from claudonomous.config import WorkflowConfig
-from claudonomous.context import WorkflowContext
-from claudonomous.executor import ExecutionResult, MockClaudeExecutor
-from claudonomous.phases import (
+from selfassembler.config import WorkflowConfig
+from selfassembler.context import WorkflowContext
+from selfassembler.executor import ExecutionResult, MockClaudeExecutor
+from selfassembler.phases import (
     PHASE_CLASSES,
     PHASE_NAMES,
     CodeReviewPhase,

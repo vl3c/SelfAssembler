@@ -1,10 +1,10 @@
 # Configuration Guide
 
-Claudonomous can be configured via a YAML file, command-line arguments, or environment variables.
+SelfAssembler can be configured via a YAML file, command-line arguments, or environment variables.
 
 ## Configuration File
 
-Create `claudonomous.yaml` in your project root. The configuration file is optional - sensible defaults are used when not provided.
+Create `selfassembler.yaml` in your project root. The configuration file is optional - sensible defaults are used when not provided.
 
 ### Full Configuration Reference
 
@@ -241,16 +241,16 @@ Command-line arguments override configuration file settings:
 
 ```bash
 # Override budget
-claudonomous "Task" --budget 25.0
+selfassembler "Task" --budget 25.0
 
 # Override plans directory
-claudonomous "Task" --plans-dir ./my-plans
+selfassembler "Task" --plans-dir ./my-plans
 
 # Disable approvals
-claudonomous "Task" --no-approvals
+selfassembler "Task" --no-approvals
 
 # Enable autonomous mode
-claudonomous "Task" --autonomous
+selfassembler "Task" --autonomous
 ```
 
 ## Environment Variables
@@ -259,7 +259,7 @@ claudonomous "Task" --autonomous
 |----------|-------------|
 | `ANTHROPIC_API_KEY` | Required for Claude CLI |
 | `GH_TOKEN` | GitHub token for PR creation |
-| `CLAUDONOMOUS_ALLOW_HOST_AUTONOMOUS` | Set to `I_ACCEPT_THE_RISK` to bypass container requirement |
+| `SELFASSEMBLER_ALLOW_HOST_AUTONOMOUS` | Set to `I_ACCEPT_THE_RISK` to bypass container requirement |
 
 ## Configuration Precedence
 
@@ -269,13 +269,13 @@ claudonomous "Task" --autonomous
 
 ## Per-Project Configuration
 
-Place `claudonomous.yaml` in your project root. When running from a subdirectory, Claudonomous searches upward for the configuration file.
+Place `selfassembler.yaml` in your project root. When running from a subdirectory, SelfAssembler searches upward for the configuration file.
 
 Search order:
-1. `claudonomous.yaml`
-2. `claudonomous.yml`
-3. `.claudonomous.yaml`
-4. `.claudonomous.yml`
+1. `selfassembler.yaml`
+2. `selfassembler.yml`
+3. `.selfassembler.yaml`
+4. `.selfassembler.yml`
 
 ## Disabling Phases
 

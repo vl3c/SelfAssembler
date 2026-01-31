@@ -1,5 +1,5 @@
-# Claudonomous Configuration
-# Copy this file to claudonomous.yaml and customize as needed
+# SelfAssembler Configuration
+# Copy this file to selfassembler.yaml and customize as needed
 
 # Budget limit in USD for the entire workflow
 budget_limit_usd: 15.0

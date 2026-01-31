@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from claudonomous.executor import ExecutionResult, MockClaudeExecutor
+from selfassembler.executor import ExecutionResult, MockClaudeExecutor
 
 
 class TestExecutionResult:

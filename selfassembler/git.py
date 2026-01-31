@@ -8,7 +8,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from claudonomous.errors import GitOperationError, WorktreeError
+from selfassembler.errors import GitOperationError, WorktreeError
 
 
 class GitManager:

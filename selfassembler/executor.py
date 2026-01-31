@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from claudonomous.errors import ClaudeExecutionError
+from selfassembler.errors import ClaudeExecutionError
 
 
 @dataclass

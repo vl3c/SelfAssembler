@@ -1,4 +1,4 @@
-"""Command-line interface for Claudonomous."""
+"""Command-line interface for SelfAssembler."""
 
 from __future__ import annotations
 
@@ -6,45 +6,45 @@ import argparse
 import sys
 from pathlib import Path
 
-from claudonomous import __version__
-from claudonomous.config import WorkflowConfig
-from claudonomous.errors import (
+from selfassembler import __version__
+from selfassembler.config import WorkflowConfig
+from selfassembler.errors import (
     ApprovalTimeoutError,
     BudgetExceededError,
-    ClaudonomousError,
+    SelfAssemblerError,
     ContainerRequiredError,
     PhaseFailedError,
 )
-from claudonomous.orchestrator import Orchestrator, create_orchestrator
-from claudonomous.phases import PHASE_NAMES
-from claudonomous.state import CheckpointManager
+from selfassembler.orchestrator import Orchestrator, create_orchestrator
+from selfassembler.phases import PHASE_NAMES
+from selfassembler.state import CheckpointManager
 
 
 def create_parser() -> argparse.ArgumentParser:
     """Create the argument parser."""
     parser = argparse.ArgumentParser(
-        prog="claudonomous",
+        prog="selfassembler",
         description="Autonomous multi-phase workflow orchestrator for Claude Code CLI",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Run a task with approval gates
-  claudonomous "Add user authentication" --name auth-feature
+  selfassembler "Add user authentication" --name auth-feature
 
   # Run without approval gates
-  claudonomous "Fix login bug" --name fix-login --no-approvals
+  selfassembler "Fix login bug" --name fix-login --no-approvals
 
   # Run in fully autonomous mode (requires container)
-  claudonomous "Add new feature" --name feature --autonomous
+  selfassembler "Add new feature" --name feature --autonomous
 
   # Resume from checkpoint
-  claudonomous --resume checkpoint_abc123
+  selfassembler --resume checkpoint_abc123
 
   # Skip to a specific phase
-  claudonomous @plans/auth-feature.md --skip-to implementation
+  selfassembler @plans/auth-feature.md --skip-to implementation
 
   # List available checkpoints
-  claudonomous --list-checkpoints
+  selfassembler --list-checkpoints
 """,
     )
 
@@ -96,7 +96,7 @@ Examples:
         "--config",
         "-c",
         type=Path,
-        help="Path to configuration file (default: claudonomous.yaml)",
+        help="Path to configuration file (default: selfassembler.yaml)",
     )
     config_group.add_argument(
         "--budget",
@@ -199,7 +199,7 @@ def handle_list_checkpoints() -> int:
 
 def handle_list_phases() -> int:
     """List all workflow phases."""
-    from claudonomous.phases import PHASE_CLASSES
+    from selfassembler.phases import PHASE_CLASSES
 
     print("Workflow phases:\n")
     for i, phase_class in enumerate(PHASE_CLASSES, 1):
@@ -215,7 +215,7 @@ def handle_list_phases() -> int:
 def handle_init_config(path: Path | None = None) -> int:
     """Create a default configuration file."""
     config = WorkflowConfig()
-    config_path = path or Path("claudonomous.yaml")
+    config_path = path or Path("selfassembler.yaml")
 
     if config_path.exists():
         print(f"Configuration file already exists: {config_path}")
@@ -230,7 +230,7 @@ def handle_init_config(path: Path | None = None) -> int:
 
 def handle_approve(phase: str, plans_dir: Path) -> int:
     """Grant approval for a phase."""
-    from claudonomous.state import ApprovalStore
+    from selfassembler.state import ApprovalStore
 
     store = ApprovalStore(plans_dir)
     store.grant_approval(phase)
@@ -291,7 +291,7 @@ def main(args: list[str] | None = None) -> int:
             orchestrator.resume_workflow()
             return 0
 
-        except ClaudonomousError as e:
+        except SelfAssemblerError as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
 
@@ -340,7 +340,7 @@ def main(args: list[str] | None = None) -> int:
     except BudgetExceededError as e:
         print(f"\nBudget exceeded: {e}", file=sys.stderr)
         print(
-            f"Resume with: claudonomous --resume {orchestrator.context.checkpoint_id}",
+            f"Resume with: selfassembler --resume {orchestrator.context.checkpoint_id}",
             file=sys.stderr,
         )
         return 1
@@ -348,11 +348,11 @@ def main(args: list[str] | None = None) -> int:
     except ApprovalTimeoutError as e:
         print(f"\nApproval timeout: {e}", file=sys.stderr)
         print(
-            f"Grant approval: claudonomous --approve {e.phase} --plans-dir {plans_dir}",
+            f"Grant approval: selfassembler --approve {e.phase} --plans-dir {plans_dir}",
             file=sys.stderr,
         )
         print(
-            f"Then resume: claudonomous --resume {orchestrator.context.checkpoint_id}",
+            f"Then resume: selfassembler --resume {orchestrator.context.checkpoint_id}",
             file=sys.stderr,
         )
         return 1
@@ -362,7 +362,7 @@ def main(args: list[str] | None = None) -> int:
         if e.error:
             print(f"Error: {e.error[:500]}", file=sys.stderr)
         print(
-            f"Resume with: claudonomous --resume {orchestrator.context.checkpoint_id}",
+            f"Resume with: selfassembler --resume {orchestrator.context.checkpoint_id}",
             file=sys.stderr,
         )
         return 1
@@ -371,7 +371,7 @@ def main(args: list[str] | None = None) -> int:
         print("\nInterrupted by user", file=sys.stderr)
         return 130
 
-    except ClaudonomousError as e:
+    except SelfAssemblerError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
