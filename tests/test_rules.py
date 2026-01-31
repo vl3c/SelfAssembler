@@ -235,21 +235,97 @@ class TestRulesManager:
             claude_md = worktree_path / "CLAUDE.md"
             assert not claude_md.exists()
 
-    def test_write_to_worktree_overwrites(self):
-        """Test write_to_worktree overwrites existing CLAUDE.md."""
+    def test_write_to_worktree_appends_to_existing(self):
+        """Test write_to_worktree appends to existing CLAUDE.md."""
         with tempfile.TemporaryDirectory() as tmpdir:
             worktree_path = Path(tmpdir)
             claude_md = worktree_path / "CLAUDE.md"
 
             # Pre-existing content
-            claude_md.write_text("Old content")
+            claude_md.write_text("# Existing Project Config\n\nSome settings here.")
 
             manager = RulesManager(enabled_rules=["no-signature"])
-            manager.write_to_worktree(worktree_path)
+            result = manager.write_to_worktree(worktree_path)
 
             content = claude_md.read_text()
-            assert "Old content" not in content
+            # Both old and new content should be present
+            assert "# Existing Project Config" in content
+            assert "Some settings here." in content
             assert "# Project Rules" in content
+            assert BUILTIN_RULES["no-signature"].description in content
+            assert result == claude_md
+
+    def test_write_to_worktree_uses_existing_agent_md(self):
+        """Test write_to_worktree appends to existing agent.md."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            worktree_path = Path(tmpdir)
+            agent_md = worktree_path / "agent.md"
+
+            agent_md.write_text("# Agent Config\n")
+
+            manager = RulesManager(enabled_rules=["no-emojis"])
+            result = manager.write_to_worktree(worktree_path)
+
+            content = agent_md.read_text()
+            assert "# Agent Config" in content
+            assert "# Project Rules" in content
+            assert result == agent_md
+            # CLAUDE.md should not be created
+            assert not (worktree_path / "CLAUDE.md").exists()
+
+    def test_write_to_worktree_uses_existing_agents_md(self):
+        """Test write_to_worktree appends to existing agents.md."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            worktree_path = Path(tmpdir)
+            agents_md = worktree_path / "agents.md"
+
+            agents_md.write_text("# Agents Config\n")
+
+            manager = RulesManager(enabled_rules=["no-yapping"])
+            result = manager.write_to_worktree(worktree_path)
+
+            content = agents_md.read_text()
+            assert "# Agents Config" in content
+            assert "# Project Rules" in content
+            assert result == agents_md
+
+    def test_write_to_worktree_prefers_claude_md(self):
+        """Test write_to_worktree prefers CLAUDE.md over agent.md."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            worktree_path = Path(tmpdir)
+            claude_md = worktree_path / "CLAUDE.md"
+            agent_md = worktree_path / "agent.md"
+
+            claude_md.write_text("# Claude Config\n")
+            agent_md.write_text("# Agent Config\n")
+
+            manager = RulesManager(enabled_rules=["no-signature"])
+            result = manager.write_to_worktree(worktree_path)
+
+            # Should append to CLAUDE.md, not agent.md
+            assert "# Project Rules" in claude_md.read_text()
+            assert "# Project Rules" not in agent_md.read_text()
+            assert result == claude_md
+
+    def test_write_to_worktree_returns_path(self):
+        """Test write_to_worktree returns the path written."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            worktree_path = Path(tmpdir)
+            manager = RulesManager(enabled_rules=["no-signature"])
+
+            result = manager.write_to_worktree(worktree_path)
+
+            assert result == worktree_path / "CLAUDE.md"
+
+    def test_write_to_worktree_returns_none_when_empty(self):
+        """Test write_to_worktree returns None when no rules."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            worktree_path = Path(tmpdir)
+            manager = RulesManager()
+
+            result = manager.write_to_worktree(worktree_path)
+
+            assert result is None
 
     def test_write_to_worktree_with_custom_rules(self):
         """Test write_to_worktree with custom rules."""

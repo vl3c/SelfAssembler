@@ -108,16 +108,45 @@ class RulesManager:
 
         return "\n".join(lines)
 
-    def write_to_worktree(self, worktree_path: Path) -> None:
-        """Write CLAUDE.md to the worktree.
+    def write_to_worktree(self, worktree_path: Path) -> Path | None:
+        """Write rules to CLAUDE.md in the worktree.
+
+        If CLAUDE.md, agent.md, or agents.md already exists, appends rules to it.
+        Otherwise creates a new CLAUDE.md file.
 
         Args:
             worktree_path: Path to the worktree directory.
+
+        Returns:
+            Path to the file written/updated, or None if no rules to write.
         """
         content = self.render_markdown()
 
         if not content:
-            return
+            return None
 
-        claude_md_path = worktree_path / "CLAUDE.md"
-        claude_md_path.write_text(content)
+        # Check for existing config files (in order of preference)
+        config_files = ["CLAUDE.md", "agent.md", "agents.md"]
+        existing_file = None
+
+        for filename in config_files:
+            path = worktree_path / filename
+            if path.exists():
+                existing_file = path
+                break
+
+        if existing_file:
+            # Append rules to existing file
+            existing_content = existing_file.read_text()
+            # Add separator if file has content
+            if existing_content.strip():
+                new_content = existing_content.rstrip() + "\n\n" + content
+            else:
+                new_content = content
+            existing_file.write_text(new_content)
+            return existing_file
+        else:
+            # Create new CLAUDE.md
+            claude_md_path = worktree_path / "CLAUDE.md"
+            claude_md_path.write_text(content)
+            return claude_md_path
