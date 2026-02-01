@@ -1276,9 +1276,6 @@ gh pr create --title "<title>" --body "$(cat <<'EOF'
 
 ## Notes
 <any additional context>
-
----
-Generated with SelfAssembler
 EOF
 )"
 ```
