@@ -5,7 +5,7 @@
 
 **Autonomous multi-phase workflow orchestrator for CLI coding agents.**
 
-SelfAssembler automates the complete software development lifecycle by orchestrating Claude Code through 16 distinct phases: environment validation, git worktree setup, research, planning, implementation, testing with fix loops, code review, documentation, commits, and PR creation with self-review.
+SelfAssembler automates the complete software development lifecycle by orchestrating colaborative CLI coding agents through 16 distinct phases: environment validation, git worktree setup, research, planning, implementation, testing with fix loops, code review, documentation, commits, and PR creation with self-review.
 
 ## Table of Contents
 
