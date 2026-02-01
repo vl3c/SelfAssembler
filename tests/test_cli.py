@@ -1,6 +1,6 @@
 """Tests for CLI module."""
 
-
+import pytest
 
 from selfassembler.cli import create_parser, generate_task_name, handle_dry_run, handle_help_phases
 from selfassembler.config import WorkflowConfig
@@ -67,6 +67,69 @@ class TestCreateParser:
         parser = create_parser()
         args = parser.parse_args(["--list-phases"])
         assert args.list_phases is True
+
+    def test_agent_flag_claude(self):
+        """Test --agent flag with claude."""
+        parser = create_parser()
+        args = parser.parse_args(["Task", "--agent", "claude"])
+        assert args.agent == "claude"
+
+    def test_agent_flag_codex(self):
+        """Test --agent flag with codex."""
+        parser = create_parser()
+        args = parser.parse_args(["Task", "--agent", "codex"])
+        assert args.agent == "codex"
+
+    def test_agent_flag_default_none(self):
+        """Test --agent flag defaults to None."""
+        parser = create_parser()
+        args = parser.parse_args(["Task"])
+        assert args.agent is None
+
+    def test_agent_flag_invalid_choice(self):
+        """Test --agent flag rejects invalid choices."""
+
+        parser = create_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["Task", "--agent", "invalid"])
+
+
+class TestAgentFlagConfig:
+    """Tests for --agent flag configuration handling."""
+
+    def test_agent_flag_sets_config(self):
+        """Test that --agent flag sets config.agent.type."""
+        from selfassembler.cli import create_parser
+
+        parser = create_parser()
+        args = parser.parse_args(["Task", "--agent", "codex", "--dry-run"])
+
+        # Load config and apply overrides (simulating main() behavior)
+        config = WorkflowConfig.load(args.config)
+        if args.agent:
+            config.agent.type = args.agent
+
+        assert config.agent.type == "codex"
+
+    def test_agent_flag_overrides_config_file(self):
+        """Test that --agent flag overrides config file setting."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from pathlib import Path
+
+            config_path = Path(tmpdir) / "config.yaml"
+
+            # Create config with claude as agent type
+            config = WorkflowConfig()
+            config.agent.type = "claude"
+            config.save(config_path)
+
+            # Load and apply CLI override
+            loaded = WorkflowConfig.load(config_path)
+            loaded.agent.type = "codex"  # Simulating --agent codex
+
+            assert loaded.agent.type == "codex"
 
 
 class TestGenerateTaskName:

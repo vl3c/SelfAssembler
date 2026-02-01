@@ -9,8 +9,18 @@ import yaml
 from pydantic import BaseModel, Field
 
 
+class AgentConfig(BaseModel):
+    """Configuration for agent CLI execution."""
+
+    type: str = Field(default="claude")  # "claude" or "codex"
+    default_timeout: int = Field(default=600, ge=60, le=7200)
+    max_turns_default: int = Field(default=50, ge=1, le=500)
+    dangerous_mode: bool = Field(default=False)
+    model: str | None = Field(default=None)
+
+
 class ClaudeConfig(BaseModel):
-    """Configuration for Claude CLI execution."""
+    """Configuration for Claude CLI execution (legacy, for backward compatibility)."""
 
     default_timeout: int = Field(default=600, ge=60, le=7200)
     max_turns_default: int = Field(default=50, ge=1, le=500)
@@ -35,6 +45,7 @@ class GitConfig(BaseModel):
     branch_prefix: str = Field(default="feature/")
     cleanup_on_fail: bool = Field(default=False)  # Preserve worktree for resume
     cleanup_remote_on_fail: bool = Field(default=False)
+    auto_update: bool = Field(default=True)  # Auto-pull and checkout in preflight
 
 
 class PhaseConfig(BaseModel):
@@ -168,7 +179,8 @@ class WorkflowConfig(BaseModel):
     autonomous_mode: bool = Field(default=False)
     plans_dir: str = Field(default="./plans")
 
-    claude: ClaudeConfig = Field(default_factory=ClaudeConfig)
+    agent: AgentConfig = Field(default_factory=AgentConfig)
+    claude: ClaudeConfig = Field(default_factory=ClaudeConfig)  # Legacy, for backward compat
     git: GitConfig = Field(default_factory=GitConfig)
     phases: PhasesConfig = Field(default_factory=PhasesConfig)
     approvals: ApprovalsConfig = Field(default_factory=ApprovalsConfig)
@@ -214,3 +226,29 @@ class WorkflowConfig(BaseModel):
         """Get configuration for a specific phase."""
         phase_name_normalized = phase_name.replace("-", "_")
         return getattr(self.phases, phase_name_normalized, PhaseConfig())
+
+    def get_effective_agent_config(self) -> AgentConfig:
+        """
+        Get the effective agent configuration.
+
+        Merges legacy claude config into agent config if agent.type is "claude"
+        and certain fields haven't been explicitly set.
+
+        Returns:
+            AgentConfig with effective values
+        """
+        # Start with the agent config
+        effective = self.agent.model_copy()
+
+        # If using claude agent, merge legacy claude config values
+        if effective.type == "claude":
+            # Only override if agent config has defaults (600, 50, False)
+            # This ensures explicit agent config values take precedence
+            if effective.default_timeout == 600 and self.claude.default_timeout != 600:
+                effective.default_timeout = self.claude.default_timeout
+            if effective.max_turns_default == 50 and self.claude.max_turns_default != 50:
+                effective.max_turns_default = self.claude.max_turns_default
+            if not effective.dangerous_mode and self.claude.dangerous_mode:
+                effective.dangerous_mode = self.claude.dangerous_mode
+
+        return effective

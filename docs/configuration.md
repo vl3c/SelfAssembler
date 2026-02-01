@@ -26,11 +26,15 @@ autonomous_mode: false
 plans_dir: "./plans"
 
 # =============================================================================
-# Claude CLI Settings
+# Agent CLI Settings
 # =============================================================================
 
-claude:
-  # Default timeout in seconds for Claude CLI calls
+# Agent configuration (selects which CLI to use)
+agent:
+  # Which agent CLI to use: "claude" or "codex"
+  type: "claude"
+
+  # Default timeout in seconds for agent CLI calls
   default_timeout: 600
 
   # Default maximum turns for agentic operations
@@ -38,6 +42,18 @@ claude:
 
   # Use dangerous mode (skip all permission prompts)
   # Only effective when autonomous_mode is true
+  dangerous_mode: false
+
+  # Override the default model (optional)
+  # For Claude: claude-sonnet-4-20250514, etc.
+  # For Codex: gpt-4o, o3, etc.
+  model: null
+
+# Legacy Claude-specific settings (for backward compatibility)
+# These values are merged into agent config when agent.type is "claude"
+claude:
+  default_timeout: 600
+  max_turns_default: 50
   dangerous_mode: false
 
 # =============================================================================
@@ -60,6 +76,12 @@ git:
   # Delete remote branch on workflow failure
   # Only applies if branch was pushed
   cleanup_remote_on_fail: false
+
+  # Automatically pull latest changes and checkout base branch in preflight
+  # When true, preflight will checkout the base branch and pull before checking
+  # if the local branch is up to date. This allows workflows to start even when
+  # behind the remote. Set to false to require manual git operations.
+  auto_update: true
 
 # =============================================================================
 # Command Overrides
@@ -265,6 +287,9 @@ selfassembler "Task" --no-approvals
 
 # Enable autonomous mode
 selfassembler "Task" --autonomous
+
+# Use OpenAI Codex instead of Claude Code
+selfassembler "Task" --agent codex
 ```
 
 ## Environment Variables
@@ -272,6 +297,7 @@ selfassembler "Task" --autonomous
 | Variable | Description |
 |----------|-------------|
 | `ANTHROPIC_API_KEY` | Required for Claude CLI |
+| `OPENAI_API_KEY` | Required for Codex CLI |
 | `GH_TOKEN` | GitHub token for PR creation |
 | `SELFASSEMBLER_ALLOW_HOST_AUTONOMOUS` | Set to `I_ACCEPT_THE_RISK` to bypass container requirement |
 
@@ -384,4 +410,16 @@ approvals:
 phases:
   implementation:
     max_turns: 50  # Limit complexity
+```
+
+### Using OpenAI Codex
+
+```yaml
+agent:
+  type: "codex"
+  model: "o3"  # Optional: specify model
+
+# Disable git auto-update if you prefer manual control
+git:
+  auto_update: false
 ```

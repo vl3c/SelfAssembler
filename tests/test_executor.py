@@ -1,6 +1,8 @@
-"""Tests for Claude executor."""
+"""Tests for Claude executor (legacy compatibility tests).
 
-
+This file maintains backward compatibility tests for the old import path.
+New tests should be added to tests/test_executors/ directory.
+"""
 
 from selfassembler.executor import ExecutionResult, MockClaudeExecutor, StreamEvent
 
@@ -66,51 +68,68 @@ class TestMockClaudeExecutor:
 
 
 class TestStreamEvent:
-    """Tests for StreamEvent."""
+    """Tests for StreamEvent dataclass."""
 
-    def test_from_line_valid_json(self):
-        """Test parsing valid JSON line."""
-        line = '{"type": "tool_use", "name": "Read", "input": {}}'
-        event = StreamEvent.from_line(line)
+    def test_basic_creation(self):
+        """Test creating a StreamEvent."""
+        event = StreamEvent(
+            event_type="assistant",
+            data={"content": "Hello"},
+        )
 
-        assert event is not None
-        assert event.event_type == "tool_use"
-        assert event.data["name"] == "Read"
-
-    def test_from_line_with_whitespace(self):
-        """Test parsing line with whitespace."""
-        line = '  {"type": "assistant", "content": "Hello"}  \n'
-        event = StreamEvent.from_line(line)
-
-        assert event is not None
         assert event.event_type == "assistant"
+        assert event.data["content"] == "Hello"
+        assert event.source == "unknown"
 
-    def test_from_line_invalid_json(self):
-        """Test parsing invalid JSON returns None."""
-        line = "not valid json"
-        event = StreamEvent.from_line(line)
+    def test_with_source(self):
+        """Test StreamEvent with source."""
+        event = StreamEvent(
+            event_type="tool_use",
+            data={"name": "Read"},
+            source="claude",
+        )
 
-        assert event is None
-
-    def test_from_line_empty_line(self):
-        """Test parsing empty line returns None."""
-        line = "   "
-        event = StreamEvent.from_line(line)
-
-        assert event is None
-
-    def test_from_line_unknown_type(self):
-        """Test parsing event without type field."""
-        line = '{"content": "test"}'
-        event = StreamEvent.from_line(line)
-
-        assert event is not None
-        assert event.event_type == "unknown"
+        assert event.source == "claude"
 
     def test_timestamp_auto_set(self):
         """Test that timestamp is automatically set."""
-        line = '{"type": "test"}'
-        event = StreamEvent.from_line(line)
+        event = StreamEvent(
+            event_type="test",
+            data={},
+        )
 
-        assert event is not None
         assert event.timestamp > 0
+
+    def test_various_event_types(self):
+        """Test various event types."""
+        for event_type in ["assistant", "tool_use", "result", "unknown"]:
+            event = StreamEvent(event_type=event_type, data={})
+            assert event.event_type == event_type
+
+
+class TestBackwardCompatibility:
+    """Tests for backward compatibility with old import paths."""
+
+    def test_imports_from_executor_module(self):
+        """Test that classes can be imported from selfassembler.executor."""
+        from selfassembler.executor import (
+            ClaudeExecutor,
+            ExecutionResult,
+            MockClaudeExecutor,
+            StreamEvent,
+        )
+
+        assert ClaudeExecutor is not None
+        assert MockClaudeExecutor is not None
+        assert ExecutionResult is not None
+        assert StreamEvent is not None
+
+    def test_same_classes_as_executors_package(self):
+        """Test that executor module exports same classes as executors package."""
+        from selfassembler.executor import ClaudeExecutor as OldClaudeExecutor
+        from selfassembler.executor import ExecutionResult as OldExecutionResult
+        from selfassembler.executors import ClaudeExecutor as NewClaudeExecutor
+        from selfassembler.executors import ExecutionResult as NewExecutionResult
+
+        assert OldClaudeExecutor is NewClaudeExecutor
+        assert OldExecutionResult is NewExecutionResult

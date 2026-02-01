@@ -21,10 +21,17 @@ CONFLICT_CHECK → PR_CREATION → PR_SELF_REVIEW → COMPLETE
 **Purpose**: Validate the environment before starting work.
 
 **Checks performed**:
-- Claude CLI is installed and working
+- Configured agent CLI is installed and working (Claude or Codex)
 - GitHub CLI is authenticated
 - Git working directory is clean
 - Local branch is up to date with remote
+
+**Auto-update behavior** (when `git.auto_update: true`, the default):
+1. Checks out the base branch (e.g., `main`) if not already on it
+2. Pulls latest changes from remote
+3. Then verifies the branch is up to date
+
+This allows workflows to start even when the local branch is behind the remote, without requiring manual git operations.
 
 **Failure handling**: If any check fails, the workflow stops with a clear error message explaining what needs to be fixed.
 
@@ -34,6 +41,9 @@ phases:
   preflight:
     timeout: 60
     enabled: true
+
+git:
+  auto_update: true  # Set to false to disable auto-pull
 ```
 
 ---
