@@ -199,7 +199,7 @@ class DebateOrchestrator:
                 allowed_tools=allowed_tools,
                 max_turns=50,
                 timeout=self.config.turn_timeout_seconds,
-                dangerous_mode=dangerous_mode,
+                dangerous_mode=True,  # Codex always runs in autonomous mode
                 working_dir=self.context.get_working_dir(),
             )
 
@@ -240,7 +240,7 @@ class DebateOrchestrator:
             allowed_tools=allowed_tools,
             max_turns=50,
             timeout=self.config.turn_timeout_seconds,
-            dangerous_mode=dangerous_mode,
+            dangerous_mode=True,  # Codex always runs in autonomous mode
             working_dir=self.context.get_working_dir(),
         )
 
@@ -300,6 +300,8 @@ class DebateOrchestrator:
                     )
 
             # Execute the message
+            # Codex always runs in autonomous mode (dangerous_mode=True)
+            effective_dangerous_mode = True if current_speaker == "codex" else dangerous_mode
             result = executor.execute(
                 prompt=prompt,
                 permission_mode=permission_mode,
@@ -307,7 +309,7 @@ class DebateOrchestrator:
                 max_turns=20,
                 timeout=self.config.message_timeout_seconds,
                 resume_session=resume_session,
-                dangerous_mode=dangerous_mode,
+                dangerous_mode=effective_dangerous_mode,
                 working_dir=self.context.get_working_dir(),
             )
 
