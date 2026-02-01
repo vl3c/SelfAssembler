@@ -6,6 +6,7 @@ import os
 import shlex
 import subprocess
 from pathlib import Path
+from typing import Any
 
 # Project type markers and their associated commands
 PROJECT_COMMANDS: dict[str, dict[str, list[str]]] = {
@@ -273,7 +274,7 @@ def run_command(
         return False, "", f"Command failed: {e}"
 
 
-def parse_test_output(output: str) -> dict[str, any]:
+def parse_test_output(output: str) -> dict[str, Any]:
     """
     Parse test output to extract pass/fail information.
 
