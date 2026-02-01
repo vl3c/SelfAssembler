@@ -329,14 +329,14 @@ copy_files:
 
 ### Phase Properties
 
-| Phase | Fresh Context | Approval Gate | Write Access |
-|-------|---------------|---------------|--------------|
-| research | Yes | No | No |
-| planning | Yes | Configurable | No |
-| plan_review | Yes | Configurable | No |
-| implementation | No | No | Yes |
-| code_review | Yes | No | No |
-| pr_self_review | Yes | No | Yes |
+| Phase | Fresh Context | Write Access |
+|-------|---------------|--------------|
+| research | Yes | No |
+| planning | Yes | No |
+| plan_review | Yes | No |
+| implementation | No | Yes |
+| code_review | Yes | No |
+| pr_self_review | Yes | Yes |
 
 ## Common Usage Patterns
 

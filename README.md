@@ -153,24 +153,24 @@ selfassembler "Task" --name task --skip-to implementation
 
 SelfAssembler executes the following phases in sequence:
 
-| # | Phase | Description | Approval Gate |
-|---|-------|-------------|---------------|
-| 1 | **Preflight** | Validate environment, auto-pull latest changes | No |
-| 2 | **Setup** | Create git worktree and isolated workspace | No |
-| 3 | **Research** | Gather project context and conventions | No |
-| 4 | **Planning** | Create detailed implementation plan | No (optional) |
-| 5 | **Implementation** | Execute the plan, write code | No |
-| 6 | **Test Writing** | Write comprehensive tests | No |
-| 7 | **Test Execution** | Run tests with fix-and-retry loop | No |
-| 8 | **Code Review** | Review implementation (fresh context) | No |
-| 9 | **Fix Review Issues** | Address findings from review | No |
-| 10 | **Lint Check** | Run linting and type checking | No |
-| 11 | **Documentation** | Update docs if needed | No |
-| 12 | **Final Verification** | Verify tests and build pass | No |
-| 13 | **Commit Prep** | Stage and commit changes | No |
-| 14 | **Conflict Check** | Rebase onto main, resolve conflicts | No |
-| 15 | **PR Creation** | Create pull request | No |
-| 16 | **PR Self-Review** | Self-review the PR with fresh context | No |
+| # | Phase | Description |
+|---|-------|-------------|
+| 1 | **Preflight** | Validate environment, auto-pull latest changes |
+| 2 | **Setup** | Create git worktree and isolated workspace |
+| 3 | **Research** | Gather project context and conventions |
+| 4 | **Planning** | Create detailed implementation plan |
+| 5 | **Implementation** | Execute the plan, write code |
+| 6 | **Test Writing** | Write comprehensive tests |
+| 7 | **Test Execution** | Run tests with fix-and-retry loop |
+| 8 | **Code Review** | Review implementation (fresh context) |
+| 9 | **Fix Review Issues** | Address findings from review |
+| 10 | **Lint Check** | Run linting and type checking |
+| 11 | **Documentation** | Update docs if needed |
+| 12 | **Final Verification** | Verify tests and build pass |
+| 13 | **Commit Prep** | Stage and commit changes |
+| 14 | **Conflict Check** | Rebase onto main, resolve conflicts |
+| 15 | **PR Creation** | Create pull request |
+| 16 | **PR Self-Review** | Self-review the PR with fresh context |
 
 ## Configuration
 
