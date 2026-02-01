@@ -1,0 +1,605 @@
+"""Tests for multi-agent debate system."""
+
+import tempfile
+from datetime import datetime
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from selfassembler.config import DebateConfig, DebatePhasesConfig, WorkflowConfig
+from selfassembler.context import WorkflowContext
+from selfassembler.debate.files import DebateFileManager
+from selfassembler.debate.prompts import (
+    CodeReviewDebatePrompts,
+    PlanningDebatePrompts,
+    PlanReviewDebatePrompts,
+    ResearchDebatePrompts,
+    get_prompt_generator,
+)
+from selfassembler.debate.results import (
+    DebateMessage,
+    DebateResult,
+    SynthesisResult,
+    Turn1Results,
+    Turn2Results,
+)
+from selfassembler.debate.transcript import DebateLog
+from selfassembler.executors.base import ExecutionResult
+
+
+class TestDebateConfig:
+    """Tests for DebateConfig model."""
+
+    def test_default_config(self):
+        """Test DebateConfig defaults."""
+        config = DebateConfig()
+        assert config.enabled is False
+        assert config.max_turns == 3
+        assert config.primary_agent == "claude"
+        assert config.secondary_agent == "codex"
+        assert config.parallel_turn_1 is True
+        assert config.max_exchange_messages == 3
+        assert config.keep_intermediate_files is True
+
+    def test_phases_config(self):
+        """Test DebatePhasesConfig defaults."""
+        config = DebatePhasesConfig()
+        assert config.research is True
+        assert config.planning is True
+        assert config.plan_review is True
+        assert config.code_review is True
+
+    def test_debate_in_workflow_config(self):
+        """Test DebateConfig in WorkflowConfig."""
+        config = WorkflowConfig()
+        assert hasattr(config, "debate")
+        assert isinstance(config.debate, DebateConfig)
+        assert config.debate.enabled is False
+
+    def test_debate_config_validation(self):
+        """Test DebateConfig validation."""
+        from pydantic import ValidationError
+
+        # Valid values
+        DebateConfig(max_turns=1)
+        DebateConfig(max_turns=5)
+        DebateConfig(max_exchange_messages=2)
+        DebateConfig(max_exchange_messages=6)
+
+        # Invalid values
+        with pytest.raises(ValidationError):
+            DebateConfig(max_turns=0)
+        with pytest.raises(ValidationError):
+            DebateConfig(max_turns=6)
+        with pytest.raises(ValidationError):
+            DebateConfig(max_exchange_messages=1)
+        with pytest.raises(ValidationError):
+            DebateConfig(max_exchange_messages=7)
+
+    def test_debate_config_save_load(self):
+        """Test saving and loading debate configuration."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "test_config.yaml"
+
+            # Create config with debate enabled
+            config = WorkflowConfig()
+            config.debate.enabled = True
+            config.debate.max_exchange_messages = 5
+            config.debate.phases.research = False
+            config.save(config_path)
+
+            # Load and verify
+            loaded = WorkflowConfig.load(config_path)
+            assert loaded.debate.enabled is True
+            assert loaded.debate.max_exchange_messages == 5
+            assert loaded.debate.phases.research is False
+
+
+class TestDebateFileManager:
+    """Tests for DebateFileManager."""
+
+    def test_file_paths(self):
+        """Test file path generation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plans_dir = Path(tmpdir) / "plans"
+            plans_dir.mkdir()
+
+            manager = DebateFileManager(plans_dir, "test-task")
+
+            # Test Turn 1 paths
+            assert manager.get_claude_t1_path("research").name == "research-test-task-claude.md"
+            assert manager.get_codex_t1_path("research").name == "research-test-task-codex.md"
+
+            # Test debate path
+            assert manager.get_debate_path("research").name == "research-test-task-debate.md"
+            assert "debates" in str(manager.get_debate_path("research"))
+
+            # Test final output path
+            assert manager.get_final_output_path("research").name == "research-test-task.md"
+
+    def test_phase_specific_paths(self):
+        """Test phase-specific path helpers."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plans_dir = Path(tmpdir) / "plans"
+            plans_dir.mkdir()
+
+            manager = DebateFileManager(plans_dir, "mytask")
+
+            # Research paths
+            research = manager.get_research_paths()
+            assert "claude_t1" in research
+            assert "codex_t1" in research
+            assert "debate" in research
+            assert "final" in research
+
+            # Planning paths
+            planning = manager.get_planning_paths()
+            assert "plan-mytask-claude.md" in str(planning["claude_t1"])
+
+    def test_ensure_directories(self):
+        """Test directory creation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plans_dir = Path(tmpdir) / "plans"
+
+            manager = DebateFileManager(plans_dir, "task")
+            manager.ensure_directories()
+
+            assert plans_dir.exists()
+            assert (plans_dir / "debates").exists()
+
+
+class TestDebateLog:
+    """Tests for DebateLog transcript management."""
+
+    def test_write_header(self):
+        """Test writing debate header."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "debate.md"
+
+            log = DebateLog(log_path)
+            log.write_header("research", "Test task")
+
+            content = log_path.read_text()
+            assert "Debate Transcript: research" in content
+            assert "Task: Test task" in content
+            assert "Claude (Primary)" in content
+
+    def test_append_message(self):
+        """Test appending messages."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "debate.md"
+
+            log = DebateLog(log_path, total_messages=3)
+            log.write_header("research", "Test task")
+            log.append_message("claude", 1, "First message content")
+            log.append_message("codex", 2, "Second message content")
+
+            content = log.get_transcript()
+            assert "[MESSAGE 1/3]" in content
+            assert "Claude" in content
+            assert "First message content" in content
+            assert "[MESSAGE 2/3]" in content
+            assert "Codex" in content
+
+    def test_get_messages(self):
+        """Test getting messages by speaker."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "debate.md"
+
+            log = DebateLog(log_path, total_messages=3)
+            log.write_header("research", "Test task")
+            log.append_message("claude", 1, "Claude msg 1")
+            log.append_message("codex", 2, "Codex msg")
+            log.append_message("claude", 3, "Claude msg 2")
+
+            claude_msgs = log.get_claude_messages()
+            codex_msgs = log.get_codex_messages()
+
+            assert len(claude_msgs) == 2
+            assert len(codex_msgs) == 1
+            assert claude_msgs[0].content == "Claude msg 1"
+            assert codex_msgs[0].content == "Codex msg"
+
+    def test_write_synthesis_summary(self):
+        """Test synthesis summary generation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "debate.md"
+
+            log = DebateLog(log_path, total_messages=3)
+            log.write_header("research", "Test task")
+            log.append_message("claude", 1, "Message 1")
+            log.write_synthesis_summary()
+
+            content = log_path.read_text()
+            assert "Synthesis Input Summary" in content
+            assert "Messages Exchanged" in content
+
+
+class TestTurn1Results:
+    """Tests for Turn1Results dataclass."""
+
+    def test_total_cost(self):
+        """Test total cost calculation."""
+        result = Turn1Results(
+            claude_result=ExecutionResult(
+                session_id="s1",
+                output="out",
+                cost_usd=0.5,
+                duration_ms=1000,
+                num_turns=5,
+                is_error=False,
+                raw_output="{}",
+            ),
+            codex_result=ExecutionResult(
+                session_id="s2",
+                output="out",
+                cost_usd=0.3,
+                duration_ms=800,
+                num_turns=3,
+                is_error=False,
+                raw_output="{}",
+            ),
+            claude_output_file=Path("/tmp/claude.md"),
+            codex_output_file=Path("/tmp/codex.md"),
+        )
+
+        assert result.total_cost == 0.8
+
+    def test_get_agent_result(self):
+        """Test getting result by agent name."""
+        claude_result = ExecutionResult(
+            session_id="claude-session",
+            output="claude output",
+            cost_usd=0.5,
+            duration_ms=1000,
+            num_turns=5,
+            is_error=False,
+            raw_output="{}",
+        )
+        codex_result = ExecutionResult(
+            session_id="codex-session",
+            output="codex output",
+            cost_usd=0.3,
+            duration_ms=800,
+            num_turns=3,
+            is_error=False,
+            raw_output="{}",
+        )
+
+        result = Turn1Results(
+            claude_result=claude_result,
+            codex_result=codex_result,
+            claude_output_file=Path("/tmp/claude.md"),
+            codex_output_file=Path("/tmp/codex.md"),
+        )
+
+        assert result.get("claude").session_id == "claude-session"
+        assert result.get("codex").session_id == "codex-session"
+
+
+class TestTurn2Results:
+    """Tests for Turn2Results dataclass."""
+
+    def test_message_tracking(self):
+        """Test message tracking in Turn2Results."""
+        msg1 = DebateMessage(
+            speaker="claude",
+            message_number=1,
+            content="Message 1",
+            result=ExecutionResult(
+                session_id="s1",
+                output="m1",
+                cost_usd=0.2,
+                duration_ms=500,
+                num_turns=2,
+                is_error=False,
+                raw_output="{}",
+            ),
+        )
+        msg2 = DebateMessage(
+            speaker="codex",
+            message_number=2,
+            content="Message 2",
+            result=ExecutionResult(
+                session_id="s2",
+                output="m2",
+                cost_usd=0.15,
+                duration_ms=400,
+                num_turns=1,
+                is_error=False,
+                raw_output="{}",
+            ),
+        )
+
+        result = Turn2Results(messages=[msg1, msg2])
+
+        assert result.message_count == 2
+        assert result.total_cost == 0.35
+        assert len(result.get_claude_messages()) == 1
+        assert len(result.get_codex_messages()) == 1
+
+
+class TestDebateResult:
+    """Tests for DebateResult dataclass."""
+
+    def test_cost_breakdown(self):
+        """Test cost breakdown by agent."""
+        turn1 = Turn1Results(
+            claude_result=ExecutionResult(
+                session_id="s1",
+                output="out",
+                cost_usd=0.5,
+                duration_ms=1000,
+                num_turns=5,
+                is_error=False,
+                raw_output="{}",
+            ),
+            codex_result=ExecutionResult(
+                session_id="s2",
+                output="out",
+                cost_usd=0.3,
+                duration_ms=800,
+                num_turns=3,
+                is_error=False,
+                raw_output="{}",
+            ),
+            claude_output_file=Path("/tmp/claude.md"),
+            codex_output_file=Path("/tmp/codex.md"),
+        )
+
+        synthesis = SynthesisResult(
+            result=ExecutionResult(
+                session_id="synth",
+                output="synthesis",
+                cost_usd=0.4,
+                duration_ms=600,
+                num_turns=4,
+                is_error=False,
+                raw_output="{}",
+            ),
+            output_file=Path("/tmp/final.md"),
+        )
+
+        result = DebateResult(
+            success=True,
+            phase_name="research",
+            final_output_file=Path("/tmp/final.md"),
+            turn1=turn1,
+            turn2=Turn2Results(messages=[]),
+            synthesis=synthesis,
+        )
+
+        # Claude cost: Turn 1 (0.5) + Synthesis (0.4) = 0.9
+        assert abs(result.claude_cost - 0.9) < 0.001
+        # Codex cost: Turn 1 (0.3) = 0.3
+        assert abs(result.codex_cost - 0.3) < 0.001
+        # Total: 0.5 + 0.3 + 0.4 = 1.2
+        assert abs(result.total_cost - 1.2) < 0.001
+
+
+class TestPromptGenerators:
+    """Tests for debate prompt generators."""
+
+    def test_research_prompts(self):
+        """Test ResearchDebatePrompts."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plans_dir = Path(tmpdir)
+
+            generator = ResearchDebatePrompts(
+                task_description="Implement feature X",
+                task_name="feature-x",
+                plans_dir=plans_dir,
+            )
+
+            # Test Turn 1 prompts
+            t1_primary = generator.turn1_primary_prompt(plans_dir / "research-claude.md")
+            assert "PRIMARY agent" in t1_primary
+            assert "Implement feature X" in t1_primary
+
+            t1_secondary = generator.turn1_secondary_prompt(plans_dir / "research-codex.md")
+            assert "SECONDARY agent" in t1_secondary
+
+    def test_code_review_prompts(self):
+        """Test CodeReviewDebatePrompts with base_branch."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plans_dir = Path(tmpdir)
+
+            generator = CodeReviewDebatePrompts(
+                task_description="Fix bug",
+                task_name="bugfix",
+                plans_dir=plans_dir,
+                base_branch="develop",
+            )
+
+            prompt = generator.turn1_primary_prompt(plans_dir / "review.md")
+            assert "develop" in prompt  # Should use custom base branch
+
+    def test_get_prompt_generator_factory(self):
+        """Test get_prompt_generator factory function."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plans_dir = Path(tmpdir)
+
+            gen = get_prompt_generator(
+                phase_name="research",
+                task_description="Test",
+                task_name="test",
+                plans_dir=plans_dir,
+            )
+            assert isinstance(gen, ResearchDebatePrompts)
+
+            gen = get_prompt_generator(
+                phase_name="planning",
+                task_description="Test",
+                task_name="test",
+                plans_dir=plans_dir,
+            )
+            assert isinstance(gen, PlanningDebatePrompts)
+
+            gen = get_prompt_generator(
+                phase_name="code_review",
+                task_description="Test",
+                task_name="test",
+                plans_dir=plans_dir,
+                base_branch="main",
+            )
+            assert isinstance(gen, CodeReviewDebatePrompts)
+
+    def test_invalid_phase_raises_error(self):
+        """Test that invalid phase name raises ValueError."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plans_dir = Path(tmpdir)
+
+            with pytest.raises(ValueError, match="No prompt generator"):
+                get_prompt_generator(
+                    phase_name="invalid_phase",
+                    task_description="Test",
+                    task_name="test",
+                    plans_dir=plans_dir,
+                )
+
+
+class TestWorkflowContextDebateSessions:
+    """Tests for debate session tracking in WorkflowContext."""
+
+    def test_set_and_get_debate_session(self):
+        """Test setting and getting debate session IDs."""
+        context = WorkflowContext(
+            task_description="Test",
+            task_name="test",
+            repo_path=Path("/tmp"),
+            plans_dir=Path("/tmp/plans"),
+        )
+
+        # Set Turn 1 sessions
+        context.set_debate_session_id("research", "claude", 1, "session-1")
+        context.set_debate_session_id("research", "codex", 1, "session-2")
+
+        # Get Turn 1 sessions
+        assert context.get_debate_session_id("research", "claude", 1) == "session-1"
+        assert context.get_debate_session_id("research", "codex", 1) == "session-2"
+
+    def test_turn2_message_sessions(self):
+        """Test Turn 2 message session tracking."""
+        context = WorkflowContext(
+            task_description="Test",
+            task_name="test",
+            repo_path=Path("/tmp"),
+            plans_dir=Path("/tmp/plans"),
+        )
+
+        # Set Turn 2 message sessions
+        context.set_debate_session_id("research", "claude", 2, "msg1-session", message_num=1)
+        context.set_debate_session_id("research", "codex", 2, "msg2-session", message_num=2)
+        context.set_debate_session_id("research", "claude", 2, "msg3-session", message_num=3)
+
+        # Get Turn 2 message sessions
+        assert context.get_debate_session_id("research", "claude", 2, 1) == "msg1-session"
+        assert context.get_debate_session_id("research", "codex", 2, 2) == "msg2-session"
+        assert context.get_debate_session_id("research", "claude", 2, 3) == "msg3-session"
+
+    def test_get_synthesis_resume_session(self):
+        """Test getting session for synthesis resume."""
+        context = WorkflowContext(
+            task_description="Test",
+            task_name="test",
+            repo_path=Path("/tmp"),
+            plans_dir=Path("/tmp/plans"),
+        )
+
+        # Set Claude's Turn 2 messages
+        context.set_debate_session_id("research", "claude", 2, "msg1-session", message_num=1)
+        context.set_debate_session_id("research", "claude", 2, "msg3-session", message_num=3)
+
+        # Should return most recent Claude session
+        assert context.get_synthesis_resume_session("research") == "msg3-session"
+
+    def test_synthesis_fallback_to_turn1(self):
+        """Test synthesis resume falls back to Turn 1 when no Turn 2 sessions."""
+        context = WorkflowContext(
+            task_description="Test",
+            task_name="test",
+            repo_path=Path("/tmp"),
+            plans_dir=Path("/tmp/plans"),
+        )
+
+        # Only set Turn 1 session
+        context.set_debate_session_id("research", "claude", 1, "t1-session")
+
+        # Should fall back to Turn 1
+        assert context.get_synthesis_resume_session("research") == "t1-session"
+
+
+class TestDebatePhaseIntegration:
+    """Integration tests for debate-enabled phases."""
+
+    def test_debate_phase_should_debate_disabled(self):
+        """Test _should_debate returns False when debate disabled."""
+        from selfassembler.phases import ResearchPhase
+
+        context = WorkflowContext(
+            task_description="Test",
+            task_name="test",
+            repo_path=Path("/tmp"),
+            plans_dir=Path("/tmp/plans"),
+        )
+        config = WorkflowConfig()
+        config.debate.enabled = False
+
+        mock_executor = MagicMock()
+        phase = ResearchPhase(context, mock_executor, config)
+
+        assert phase._should_debate() is False
+
+    def test_debate_phase_should_debate_no_secondary(self):
+        """Test _should_debate returns False when no secondary executor."""
+        from selfassembler.phases import ResearchPhase
+
+        context = WorkflowContext(
+            task_description="Test",
+            task_name="test",
+            repo_path=Path("/tmp"),
+            plans_dir=Path("/tmp/plans"),
+        )
+        config = WorkflowConfig()
+        config.debate.enabled = True
+
+        mock_executor = MagicMock()
+        phase = ResearchPhase(context, mock_executor, config, secondary_executor=None)
+
+        assert phase._should_debate() is False
+
+    def test_debate_phase_should_debate_enabled(self):
+        """Test _should_debate returns True when properly configured."""
+        from selfassembler.phases import ResearchPhase
+
+        context = WorkflowContext(
+            task_description="Test",
+            task_name="test",
+            repo_path=Path("/tmp"),
+            plans_dir=Path("/tmp/plans"),
+        )
+        config = WorkflowConfig()
+        config.debate.enabled = True
+        config.debate.phases.research = True
+
+        mock_primary = MagicMock()
+        mock_secondary = MagicMock()
+        phase = ResearchPhase(context, mock_primary, config, secondary_executor=mock_secondary)
+
+        assert phase._should_debate() is True
+
+    def test_debate_phase_attributes(self):
+        """Test debate phase has correct attributes."""
+        from selfassembler.phases import (
+            CodeReviewPhase,
+            PlanningPhase,
+            PlanReviewPhase,
+            ResearchPhase,
+        )
+
+        # All debate-enabled phases should have these attributes
+        for phase_class in [ResearchPhase, PlanningPhase, PlanReviewPhase, CodeReviewPhase]:
+            assert hasattr(phase_class, "debate_supported")
+            assert hasattr(phase_class, "debate_phase_name")
+            assert phase_class.debate_supported is True

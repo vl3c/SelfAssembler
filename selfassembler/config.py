@@ -172,6 +172,45 @@ class RulesConfig(BaseModel):
     custom_rules: list[str] = Field(default_factory=list)
 
 
+class DebatePhasesConfig(BaseModel):
+    """Which phases have debate enabled."""
+
+    research: bool = Field(default=True)
+    planning: bool = Field(default=True)
+    plan_review: bool = Field(default=True)
+    code_review: bool = Field(default=True)
+
+
+class DebateConfig(BaseModel):
+    """Configuration for multi-agent debate system."""
+
+    enabled: bool = Field(default=False)
+    max_turns: int = Field(default=3, ge=1, le=5)
+
+    # Agent roles
+    primary_agent: str = Field(default="claude")
+    secondary_agent: str = Field(default="codex")
+
+    # Phases with debate enabled
+    phases: DebatePhasesConfig = Field(default_factory=DebatePhasesConfig)
+
+    # Execution settings
+    parallel_turn_1: bool = Field(default=True)
+    turn_timeout_seconds: int = Field(default=300)
+
+    # Message exchange settings (Turn 2)
+    max_exchange_messages: int = Field(default=3, ge=2, le=6)
+    message_timeout_seconds: int = Field(default=180)
+
+    # Output settings
+    keep_intermediate_files: bool = Field(default=True)
+    debate_subdir: str = Field(default="debates")
+
+    # Synthesis settings
+    include_attribution: bool = Field(default=True)
+    max_unresolved_conflicts: int = Field(default=5)
+
+
 class WorkflowConfig(BaseModel):
     """Main configuration for SelfAssembler workflows."""
 
@@ -188,6 +227,7 @@ class WorkflowConfig(BaseModel):
     commands: CommandsConfig = Field(default_factory=CommandsConfig)
     streaming: StreamingConfig = Field(default_factory=StreamingConfig)
     rules: RulesConfig = Field(default_factory=RulesConfig)
+    debate: DebateConfig = Field(default_factory=DebateConfig)
     copy_files: list[str] = Field(default_factory=lambda: [".env", ".env.local", ".claude/*"])
 
     @classmethod
