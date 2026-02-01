@@ -777,3 +777,107 @@ class TestSameAgentDebate:
         assert context.get_debate_session_id("research", "primary", 2, 1) == "primary-t2-msg1"
         assert context.get_debate_session_id("research", "secondary", 2, 2) == "secondary-t2-msg2"
         assert context.get_debate_session_id("research", "primary", 2, 3) == "primary-t2-msg3"
+
+    def test_turn1_results_get_output_file_by_role(self):
+        """Test get_output_file_by_role works for same-agent debates."""
+        result = Turn1Results(
+            primary_result=ExecutionResult(
+                session_id="s1",
+                output="primary output",
+                cost_usd=0.5,
+                duration_ms=1000,
+                num_turns=5,
+                is_error=False,
+                raw_output="{}",
+            ),
+            secondary_result=ExecutionResult(
+                session_id="s2",
+                output="secondary output",
+                cost_usd=0.3,
+                duration_ms=800,
+                num_turns=3,
+                is_error=False,
+                raw_output="{}",
+            ),
+            primary_output_file=Path("/tmp/research-primary.md"),
+            secondary_output_file=Path("/tmp/research-secondary.md"),
+            primary_agent="claude",
+            secondary_agent="claude",  # Same agent
+        )
+
+        # get_output_file_by_role always returns correct file regardless of agent names
+        assert result.get_output_file_by_role("primary") == Path("/tmp/research-primary.md")
+        assert result.get_output_file_by_role("secondary") == Path("/tmp/research-secondary.md")
+
+        # Contrast with get_output_file which can't distinguish same-agent
+        # (it returns primary for both since primary_agent matches first)
+        assert result.get_output_file("claude") == Path("/tmp/research-primary.md")
+
+    def test_debate_log_get_primary_messages_by_role(self):
+        """Test DebateLog.get_primary_messages uses role field for same-agent debates."""
+        from selfassembler.debate.transcript import DebateLog
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "debate.md"
+
+            # Create log for same-agent debate
+            log = DebateLog(log_path, total_messages=3, primary_agent="claude", secondary_agent="claude")
+            log.write_header("research", "test task")
+
+            # Add messages with role field set
+            log.append_message("claude", 1, "Primary message 1", datetime.now(), role="primary")
+            log.append_message("claude", 2, "Secondary message", datetime.now(), role="secondary")
+            log.append_message("claude", 3, "Primary message 2", datetime.now(), role="primary")
+
+            # get_primary_messages should use role, not speaker name
+            primary_msgs = log.get_primary_messages()
+            assert len(primary_msgs) == 2
+            assert primary_msgs[0].content == "Primary message 1"
+            assert primary_msgs[1].content == "Primary message 2"
+
+            secondary_msgs = log.get_secondary_messages()
+            assert len(secondary_msgs) == 1
+            assert secondary_msgs[0].content == "Secondary message"
+
+    def test_prompt_generator_uses_explicit_role(self):
+        """Test prompt generator uses explicit role parameter for same-agent debates."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plans_dir = Path(tmpdir)
+
+            # Both agents are Claude - same-agent debate
+            generator = ResearchDebatePrompts(
+                task_description="Test task",
+                task_name="test",
+                plans_dir=plans_dir,
+                primary_agent="claude",
+                secondary_agent="claude",
+            )
+
+            primary_file = plans_dir / "primary.md"
+            secondary_file = plans_dir / "secondary.md"
+
+            # Without explicit role, both would be labeled PRIMARY (bug)
+            # With explicit role, correct labels are used
+            prompt_primary = generator.debate_message_prompt(
+                speaker="claude",
+                message_number=1,
+                total_messages=3,
+                transcript_so_far="",
+                own_t1_output=primary_file,
+                other_t1_output=secondary_file,
+                is_final_message=False,
+                role="primary",  # Explicit role
+            )
+            assert "PRIMARY agent" in prompt_primary
+
+            prompt_secondary = generator.debate_message_prompt(
+                speaker="claude",  # Same speaker name
+                message_number=2,
+                total_messages=3,
+                transcript_so_far="",
+                own_t1_output=secondary_file,
+                other_t1_output=primary_file,
+                is_final_message=False,
+                role="secondary",  # Explicit role
+            )
+            assert "SECONDARY agent" in prompt_secondary

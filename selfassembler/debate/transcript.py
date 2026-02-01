@@ -19,6 +19,7 @@ class DebateMessage:
     message_number: int
     content: str
     timestamp: datetime = field(default_factory=datetime.now)
+    role: str | None = None  # "primary" or "secondary" - supports same-agent debates
 
     def format_header(self, total_messages: int) -> str:
         """Format the message header for the transcript."""
@@ -94,8 +95,18 @@ Participants: {primary_name} (Primary), {secondary_name} (Secondary)
         message_num: int,
         content: str,
         timestamp: datetime | None = None,
+        role: str | None = None,
     ) -> None:
-        """Append a message to the debate log."""
+        """Append a message to the debate log.
+
+        Args:
+            speaker: Agent name (e.g., "claude", "codex")
+            message_num: Message number in the exchange
+            content: Message content
+            timestamp: Message timestamp (defaults to now)
+            role: Role in debate ("primary" or "secondary"). Required for
+                  same-agent debates where speaker names are identical.
+        """
         if timestamp is None:
             timestamp = datetime.now()
 
@@ -104,6 +115,7 @@ Participants: {primary_name} (Primary), {secondary_name} (Secondary)
             message_number=message_num,
             content=content,
             timestamp=timestamp,
+            role=role,
         )
         self.messages.append(msg)
 
@@ -167,12 +179,32 @@ Participants: {primary_name} (Primary), {secondary_name} (Secondary)
         """Get all messages from a specific agent."""
         return [m for m in self.messages if m.speaker == agent]
 
+    def get_role_messages(self, role: str) -> list[DebateMessage]:
+        """Get all messages from a specific role ("primary" or "secondary")."""
+        return [m for m in self.messages if m.role == role]
+
     def get_primary_messages(self) -> list[DebateMessage]:
-        """Get all messages from the primary agent."""
+        """Get all messages from the primary agent.
+
+        Uses the role field to correctly handle same-agent debates.
+        """
+        # Use role field if available (supports same-agent debates)
+        role_msgs = self.get_role_messages("primary")
+        if role_msgs:
+            return role_msgs
+        # Fallback to agent name for backward compatibility
         return self.get_agent_messages(self.primary_agent)
 
     def get_secondary_messages(self) -> list[DebateMessage]:
-        """Get all messages from the secondary agent."""
+        """Get all messages from the secondary agent.
+
+        Uses the role field to correctly handle same-agent debates.
+        """
+        # Use role field if available (supports same-agent debates)
+        role_msgs = self.get_role_messages("secondary")
+        if role_msgs:
+            return role_msgs
+        # Fallback to agent name for backward compatibility
         return self.get_agent_messages(self.secondary_agent)
 
     # Backward compatibility

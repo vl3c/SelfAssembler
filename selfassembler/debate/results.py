@@ -95,6 +95,19 @@ class Turn1Results:
         else:
             raise ValueError(f"Unknown agent: {agent}")
 
+    def get_output_file_by_role(self, role: str) -> Path:
+        """Get output file path by role (primary/secondary).
+
+        This method should be preferred over get_output_file() when working
+        with same-agent debates where primary_agent == secondary_agent.
+        """
+        if role == "primary":
+            return self.primary_output_file
+        elif role == "secondary":
+            return self.secondary_output_file
+        else:
+            raise ValueError(f"Unknown role: {role}. Must be 'primary' or 'secondary'")
+
 
 @dataclass
 class Turn2Results:

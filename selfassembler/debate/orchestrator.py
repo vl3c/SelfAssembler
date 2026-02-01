@@ -183,6 +183,14 @@ class DebateOrchestrator:
         dangerous_mode: bool,
     ) -> Turn1Results:
         """Run Turn 1 with parallel execution."""
+        # Determine secondary's dangerous_mode based on agent configuration
+        # Same-agent debates respect dangerous_mode; different agents force autonomous
+        secondary_dangerous_mode = (
+            dangerous_mode
+            if self.secondary_agent == self.primary_agent
+            else True
+        )
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             primary_future = executor.submit(
                 self.primary.execute,
@@ -202,7 +210,7 @@ class DebateOrchestrator:
                 allowed_tools=allowed_tools,
                 max_turns=50,
                 timeout=self.config.turn_timeout_seconds,
-                dangerous_mode=True,  # Secondary always runs in autonomous mode
+                dangerous_mode=secondary_dangerous_mode,
                 working_dir=self.context.get_working_dir(),
             )
 
@@ -229,6 +237,14 @@ class DebateOrchestrator:
         dangerous_mode: bool,
     ) -> Turn1Results:
         """Run Turn 1 sequentially (primary first, then secondary)."""
+        # Determine secondary's dangerous_mode based on agent configuration
+        # Same-agent debates respect dangerous_mode; different agents force autonomous
+        secondary_dangerous_mode = (
+            dangerous_mode
+            if self.secondary_agent == self.primary_agent
+            else True
+        )
+
         primary_result = self.primary.execute(
             prompt=primary_prompt,
             permission_mode=permission_mode,
@@ -245,7 +261,7 @@ class DebateOrchestrator:
             allowed_tools=allowed_tools,
             max_turns=50,
             timeout=self.config.turn_timeout_seconds,
-            dangerous_mode=True,  # Secondary always runs in autonomous mode
+            dangerous_mode=secondary_dangerous_mode,
             working_dir=self.context.get_working_dir(),
         )
 
@@ -290,14 +306,17 @@ class DebateOrchestrator:
             is_primary = current_role == "primary"
 
             # Build prompt with debate context so far
+            # Use role-based file lookup to support same-agent debates
+            other_role = "secondary" if current_role == "primary" else "primary"
             prompt = prompt_generator.debate_message_prompt(
                 speaker=current_speaker,
                 message_number=msg_num,
                 total_messages=max_messages,
                 transcript_so_far=debate_log.get_transcript(),
-                own_t1_output=t1_results.get_output_file(current_speaker),
-                other_t1_output=t1_results.get_output_file(self._other_agent(current_speaker)),
+                own_t1_output=t1_results.get_output_file_by_role(current_role),
+                other_t1_output=t1_results.get_output_file_by_role(other_role),
                 is_final_message=is_final,
+                role=current_role,
             )
 
             # Select executor based on role
@@ -314,8 +333,18 @@ class DebateOrchestrator:
                     )
 
             # Execute the message
-            # Secondary agent always runs in autonomous mode (dangerous_mode=True)
-            effective_dangerous_mode = dangerous_mode if is_primary else True
+            # Secondary agent runs in autonomous mode only if it's a different agent type
+            # (e.g., Codex doesn't handle approval prompts well). For same-agent debates
+            # (e.g., Claude vs Claude), respect the dangerous_mode setting to preserve
+            # approval safety.
+            if is_primary:
+                effective_dangerous_mode = dangerous_mode
+            elif self.secondary_agent == self.primary_agent:
+                # Same-agent debate: respect dangerous_mode for both
+                effective_dangerous_mode = dangerous_mode
+            else:
+                # Different agents: secondary (e.g., Codex) runs autonomous
+                effective_dangerous_mode = True
             result = executor.execute(
                 prompt=prompt,
                 permission_mode=permission_mode,
@@ -337,12 +366,13 @@ class DebateOrchestrator:
             )
             messages_exchanged.append(message)
 
-            # Append to debate log
+            # Append to debate log with role for same-agent debate support
             debate_log.append_message(
                 speaker=current_speaker,
                 message_num=msg_num,
                 content=result.output,
                 timestamp=datetime.now(),
+                role=current_role,
             )
 
             # Store session using role (not agent name) to avoid collisions in same-agent debates

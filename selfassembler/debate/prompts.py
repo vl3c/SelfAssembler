@@ -59,6 +59,7 @@ class BaseDebatePromptGenerator(ABC):
         own_t1_output: Path,
         other_t1_output: Path,
         is_final_message: bool,
+        role: str | None = None,
     ) -> str:
         """Generate prompt for a debate message.
 
@@ -70,18 +71,26 @@ class BaseDebatePromptGenerator(ABC):
             own_t1_output: Path to this speaker's Turn 1 output
             other_t1_output: Path to the other agent's Turn 1 output
             is_final_message: Whether this is the last message in the debate
+            role: The role of the speaker ("primary" or "secondary"). If provided,
+                  this takes precedence over deriving role from speaker name.
+                  Required for same-agent debates where speaker names are identical.
         """
         # Determine if this is primary or secondary agent speaking
-        is_primary = speaker == self.primary_agent
+        # Use explicit role if provided (required for same-agent debates)
+        if role is not None:
+            is_primary = role == "primary"
+        else:
+            # Fallback: derive from speaker name (doesn't work for same-agent debates)
+            is_primary = speaker == self.primary_agent
         speaker_name = self.primary_name if is_primary else self.secondary_name
         other_name = self.secondary_name if is_primary else self.primary_name
-        role = "PRIMARY" if is_primary else "SECONDARY"
+        role_label = "PRIMARY" if is_primary else "SECONDARY"
 
         if is_final_message:
             return self._final_message_prompt(
                 speaker_name=speaker_name,
                 other_name=other_name,
-                role=role,
+                role=role_label,
                 transcript_so_far=transcript_so_far,
                 own_t1_output=own_t1_output,
                 message_number=message_number,
@@ -91,7 +100,7 @@ class BaseDebatePromptGenerator(ABC):
             return self._opening_message_prompt(
                 speaker_name=speaker_name,
                 other_name=other_name,
-                role=role,
+                role=role_label,
                 own_t1_output=own_t1_output,
                 other_t1_output=other_t1_output,
                 total_messages=total_messages,
@@ -100,7 +109,7 @@ class BaseDebatePromptGenerator(ABC):
             return self._response_message_prompt(
                 speaker_name=speaker_name,
                 other_name=other_name,
-                role=role,
+                role=role_label,
                 transcript_so_far=transcript_so_far,
                 own_t1_output=own_t1_output,
                 message_number=message_number,
@@ -169,6 +178,9 @@ NOTE: This is message 1 of {total_messages}. {next_steps}.
             next_steps = "This is the last response before synthesis"
 
         return f"""# Debate: {self.phase_name} - Message {message_number} of {total_messages} ({speaker_name})
+
+## Context
+You are the {role} agent ({speaker_name}) in a multi-agent debate.
 
 ## Previous Exchange
 {transcript_so_far}
