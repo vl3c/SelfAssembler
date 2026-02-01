@@ -37,12 +37,13 @@ class CodexExecutor(AgentExecutor):
     CLI_COMMAND = "codex"
     INSTALL_INSTRUCTIONS = "Install from: https://github.com/openai/codex"
 
-    # Mapping from SelfAssembler permission modes to Codex settings
-    # Returns tuple of (approval_policy, sandbox_mode)
+    # Mapping from SelfAssembler permission modes to Codex sandbox modes
+    # codex exec only supports: -s (sandbox) and --full-auto flags
+    # Sandbox values: read-only, workspace-write, danger-full-access
     PERMISSION_MODE_MAP = {
-        "plan": ("untrusted", "read-only"),  # Read-only, require approval
-        "acceptEdits": ("on-request", "workspace-write"),  # Allow edits with model-driven approval
-        "default": ("untrusted", "read-only"),  # Safe default
+        "plan": "read-only",  # Read-only sandbox
+        "acceptEdits": "workspace-write",  # Allow file edits in workspace
+        "default": "read-only",  # Safe default
     }
 
     def __init__(
@@ -67,32 +68,41 @@ class CodexExecutor(AgentExecutor):
 
     def _map_permission_mode(
         self, permission_mode: str | None, dangerous_mode: bool
-    ) -> tuple[str | None, str | None, bool]:
+    ) -> tuple[str | None, bool, bool]:
         """
         Map SelfAssembler permission modes to Codex CLI flags.
+
+        codex exec supports:
+        - -s, --sandbox: read-only | workspace-write | danger-full-access
+        - --full-auto: Shortcut for workspace-write with model-driven approval
+        - --dangerously-bypass-approvals-and-sandbox: Skip all prompts (DANGEROUS)
 
         Args:
             permission_mode: SelfAssembler permission mode
             dangerous_mode: Whether dangerous mode is enabled
 
         Returns:
-            Tuple of (approval_policy, sandbox_mode, use_dangerous_flag)
-            - approval_policy: Value for -a flag (or None to omit)
+            Tuple of (sandbox_mode, use_full_auto, use_dangerous_flag)
             - sandbox_mode: Value for -s flag (or None to omit)
+            - use_full_auto: Whether to use --full-auto flag
             - use_dangerous_flag: Whether to use --dangerously-bypass-approvals-and-sandbox
         """
         if dangerous_mode:
             # Use the dangerous bypass flag for full autonomy
-            return None, None, True
+            return None, False, True
 
         if permission_mode is None:
-            approval, sandbox = self.PERMISSION_MODE_MAP["default"]
-            return approval, sandbox, False
+            sandbox = self.PERMISSION_MODE_MAP["default"]
+            return sandbox, False, False
 
-        approval, sandbox = self.PERMISSION_MODE_MAP.get(
+        # For acceptEdits, use --full-auto which is workspace-write with auto-approval
+        if permission_mode == "acceptEdits":
+            return None, True, False
+
+        sandbox = self.PERMISSION_MODE_MAP.get(
             permission_mode, self.PERMISSION_MODE_MAP["default"]
         )
-        return approval, sandbox, False
+        return sandbox, False, False
 
     def execute(
         self,
@@ -222,20 +232,19 @@ class CodexExecutor(AgentExecutor):
             cmd = [self.CLI_COMMAND, "exec", prompt]
 
         # Map permission mode to Codex flags
-        approval_policy, sandbox_mode, use_dangerous = self._map_permission_mode(
+        sandbox_mode, use_full_auto, use_dangerous = self._map_permission_mode(
             permission_mode, dangerous_mode
         )
 
         if use_dangerous:
             # Full bypass - extremely dangerous, only for externally sandboxed envs
             cmd.append("--dangerously-bypass-approvals-and-sandbox")
-        else:
-            # Apply approval policy
-            if approval_policy:
-                cmd.extend(["-a", approval_policy])
+        elif use_full_auto:
+            # Use --full-auto for workspace-write with automatic approval
+            cmd.append("--full-auto")
+        elif sandbox_mode:
             # Apply sandbox mode
-            if sandbox_mode:
-                cmd.extend(["-s", sandbox_mode])
+            cmd.extend(["-s", sandbox_mode])
 
         # Model selection
         if self.model:
