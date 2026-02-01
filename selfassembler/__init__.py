@@ -5,7 +5,7 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     __version__ = version("selfassembler")
 except PackageNotFoundError:
-    __version__ = "0.0.0"  # Fallback for development
+    __version__ = "0.2.0"  # Fallback for development
 __author__ = "SelfAssembler Contributors"
 
 from selfassembler.config import AgentConfig, WorkflowConfig
