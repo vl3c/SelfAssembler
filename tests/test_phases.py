@@ -223,22 +223,39 @@ class TestPhasePermissionModeHelper:
         # but no claude_mode set
         assert phase._get_permission_mode() == "acceptEdits"
 
-    def test_planning_phase_returns_plan_despite_write_tool(self, context: WorkflowContext, config: WorkflowConfig):
-        """Test that planning phase returns 'plan' even though it has Write tool."""
+    def test_planning_phase_returns_accept_edits_for_write_tool(self, context: WorkflowContext, config: WorkflowConfig):
+        """Test that planning phase returns 'acceptEdits' because it has Write tool."""
         executor = MockClaudeExecutor()
         phase = PlanningPhase(context, executor, config)
 
-        # PlanningPhase has claude_mode = "plan" AND Write in allowed_tools
-        # claude_mode should take precedence
-        assert phase._get_permission_mode() == "plan"
+        # PlanningPhase has Write in allowed_tools
+        # Write tools take priority over claude_mode for Codex compatibility
+        assert phase._get_permission_mode() == "acceptEdits"
 
-    def test_code_review_returns_plan(self, context: WorkflowContext, config: WorkflowConfig):
-        """Test that code review phase returns 'plan' (read-only)."""
+    def test_code_review_returns_plan_despite_bash_tool(self, context: WorkflowContext, config: WorkflowConfig):
+        """Test that code review phase returns 'plan' - Bash is not a write tool."""
         executor = MockClaudeExecutor()
         phase = CodeReviewPhase(context, executor, config)
 
-        # CodeReviewPhase has claude_mode = "plan"
+        # CodeReviewPhase has Bash in allowed_tools but Bash is NOT a write tool
+        # (it's used for read-only ops like git diff), so claude_mode takes precedence
         assert phase._get_permission_mode() == "plan"
+
+    def test_requires_write_returns_accept_edits(self, context: WorkflowContext, config: WorkflowConfig):
+        """Test that phases with requires_write=True return 'acceptEdits'."""
+        from selfassembler.phases import CommitPrepPhase, PRCreationPhase
+
+        executor = MockClaudeExecutor()
+
+        # These phases only have Bash/Read but set requires_write=True
+        # for operations that need write access
+        from selfassembler.phases import PRSelfReviewPhase
+        for phase_class in [CommitPrepPhase, PRCreationPhase, PRSelfReviewPhase]:
+            phase = phase_class(context, executor, config)
+            assert phase.requires_write is True
+            assert phase._get_permission_mode() == "acceptEdits", (
+                f"{phase_class.__name__} should return 'acceptEdits' due to requires_write"
+            )
 
     def test_all_write_phases_return_accept_edits(self, context: WorkflowContext, config: WorkflowConfig):
         """Test that all phases with write tools but no claude_mode return acceptEdits."""
@@ -251,33 +268,32 @@ class TestPhasePermissionModeHelper:
             CommitPrepPhase,
             ConflictCheckPhase,
             PRCreationPhase,
+            PRSelfReviewPhase,
         )
 
         executor = MockClaudeExecutor()
 
-        # These phases have Write/Edit/Bash in allowed_tools but no claude_mode
+        # These phases need write access via:
+        # - Write/Edit in allowed_tools, or
+        # - requires_write = True (for Bash-based git operations)
         write_phases = [
             ImplementationPhase,
             TestWritingPhase,
-            TestExecutionPhase,
+            TestExecutionPhase,  # has Edit
             FixReviewIssuesPhase,
-            LintCheckPhase,
+            LintCheckPhase,  # has Edit
             DocumentationPhase,
-            CommitPrepPhase,
-            ConflictCheckPhase,
-            PRCreationPhase,
+            ConflictCheckPhase,  # has Edit
+            CommitPrepPhase,  # requires_write for git commit
+            PRCreationPhase,  # requires_write for git push/gh pr
+            PRSelfReviewPhase,  # requires_write for gh pr review
         ]
 
         for phase_class in write_phases:
             phase = phase_class(context, executor, config)
-            # If claude_mode is set, it should use that
-            if phase.claude_mode is not None:
-                assert phase._get_permission_mode() == phase.claude_mode
-            else:
-                # Otherwise should return acceptEdits for write phases
-                assert phase._get_permission_mode() == "acceptEdits", (
-                    f"{phase_class.__name__} should return 'acceptEdits'"
-                )
+            assert phase._get_permission_mode() == "acceptEdits", (
+                f"{phase_class.__name__} should return 'acceptEdits'"
+            )
 
 
 class TestDangerousModeConfig:

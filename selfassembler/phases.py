@@ -47,6 +47,7 @@ class Phase(ABC):
     allowed_tools: list[str] | None = None
     max_turns: int = 50
     fresh_context: bool = False  # True = new session (unbiased)
+    requires_write: bool = False  # True = needs write access via Bash (git, etc.)
 
     def __init__(
         self,
@@ -80,20 +81,28 @@ class Phase(ABC):
         """
         Derive the permission mode for this phase.
 
+        - If requires_write is True, use "acceptEdits" (for Bash-based write phases)
+        - If allowed_tools includes file write operations (Write, Edit), use "acceptEdits"
+          (this takes priority because Codex's "suggest" mode is fully read-only)
         - If claude_mode is explicitly set, use it (e.g., "plan" for read-only phases)
-        - If allowed_tools includes write operations (Write, Edit, Bash), use "acceptEdits"
         - Otherwise, return None to let the executor use its default
 
-        This ensures write-heavy phases get writable sandbox access for agents
-        like Codex that default to read-only mode.
+        Note: Bash is NOT considered a write tool here because many phases use it
+        for read-only operations (e.g., CodeReviewPhase uses git diff). Phases that
+        need Bash for writing should set requires_write = True.
         """
-        if self.claude_mode is not None:
-            return self.claude_mode
+        # Explicit write requirement (e.g., git commit phases)
+        if self.requires_write:
+            return "acceptEdits"
 
-        # Check if this phase needs write access
-        write_tools = {"Write", "Edit", "Bash"}
+        # Check if this phase needs file write access - takes priority over claude_mode
+        # because Codex "suggest" mode is fully read-only unlike Claude's "plan" mode
+        write_tools = {"Write", "Edit"}
         if self.allowed_tools and write_tools & set(self.allowed_tools):
             return "acceptEdits"
+
+        if self.claude_mode is not None:
+            return self.claude_mode
 
         return None
 
@@ -1129,6 +1138,7 @@ class CommitPrepPhase(Phase):
 
     name = "commit_prep"
     allowed_tools = ["Bash", "Read"]
+    requires_write = True  # git add/commit modifies repo
     max_turns = 10
     timeout_seconds = 300
 
@@ -1276,6 +1286,7 @@ class PRCreationPhase(Phase):
 
     name = "pr_creation"
     allowed_tools = ["Bash", "Read"]
+    requires_write = True  # git push, gh pr create
     max_turns = 15
     timeout_seconds = 300
 
@@ -1381,6 +1392,7 @@ class PRSelfReviewPhase(Phase):
     claude_mode = "plan"
     fresh_context = True  # Unbiased review
     allowed_tools = ["Bash", "Read"]
+    requires_write = True  # gh pr review may write config/auth state
     max_turns = 20
     timeout_seconds = 600
 

@@ -127,7 +127,7 @@ class ApprovalGatesConfig(BaseModel):
 class ApprovalsConfig(BaseModel):
     """Configuration for the approval system."""
 
-    enabled: bool = Field(default=True)
+    enabled: bool = Field(default=False)  # Autonomous by default
     timeout_hours: float = Field(default=24.0, ge=0.1)
     gates: ApprovalGatesConfig = Field(default_factory=ApprovalGatesConfig)
 

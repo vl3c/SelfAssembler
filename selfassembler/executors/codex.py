@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import functools
 import json
 import subprocess
 import threading
@@ -13,6 +14,21 @@ from typing import Any
 
 from selfassembler.errors import AgentExecutionError
 from selfassembler.executors.base import AgentExecutor, ExecutionResult, StreamEvent
+
+
+@functools.lru_cache(maxsize=1)
+def _check_landlock_available() -> bool:
+    """Check if Linux Landlock is available and working on this system.
+
+    Note: Even when /sys/kernel/security/landlock exists, Codex's workspace-write
+    sandbox can fail with Landlock errors on some systems. We always return False
+    to use danger-full-access, relying on external sandboxing for safety.
+
+    TODO: Implement a runtime test that actually tries workspace-write mode.
+    """
+    # Always use danger-full-access - Landlock detection is unreliable
+    # External sandboxing should be used for safety
+    return False
 
 
 class CodexExecutor(AgentExecutor):
@@ -77,6 +93,10 @@ class CodexExecutor(AgentExecutor):
         - --full-auto: Shortcut for workspace-write with model-driven approval
         - --dangerously-bypass-approvals-and-sandbox: Skip all prompts (DANGEROUS)
 
+        Note: We always use danger-full-access for write operations because Codex's
+        Landlock-based workspace-write sandbox is unreliable on many systems.
+        External sandboxing should be used for safety in production.
+
         Args:
             permission_mode: SelfAssembler permission mode
             dangerous_mode: Whether dangerous mode is enabled
@@ -95,9 +115,10 @@ class CodexExecutor(AgentExecutor):
             sandbox = self.PERMISSION_MODE_MAP["default"]
             return sandbox, False, False
 
-        # For acceptEdits, use --full-auto which is workspace-write with auto-approval
+        # For acceptEdits, use danger-full-access since Landlock is unreliable
+        # External sandboxing should be used for safety
         if permission_mode == "acceptEdits":
-            return None, True, False
+            return "danger-full-access", False, False
 
         sandbox = self.PERMISSION_MODE_MAP.get(
             permission_mode, self.PERMISSION_MODE_MAP["default"]

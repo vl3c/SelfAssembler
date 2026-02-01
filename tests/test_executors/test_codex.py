@@ -7,7 +7,21 @@ import pytest
 
 from selfassembler.errors import AgentExecutionError
 from selfassembler.executors.base import ExecutionResult
-from selfassembler.executors.codex import CodexExecutor, MockCodexExecutor
+from selfassembler.executors.codex import CodexExecutor, MockCodexExecutor, _check_landlock_available
+
+
+class TestLandlockDetection:
+    """Tests for Landlock availability detection."""
+
+    def test_landlock_always_returns_false(self):
+        """Test that Landlock detection always returns False.
+
+        Landlock detection is disabled because Codex's workspace-write
+        sandbox is unreliable on many systems. External sandboxing
+        should be used for safety.
+        """
+        _check_landlock_available.cache_clear()
+        assert _check_landlock_available() is False
 
 
 class TestCodexExecutorAttributes:
@@ -72,7 +86,7 @@ class TestCodexExecutorPermissionModeMapping:
     """Tests for permission mode mapping.
 
     Returns tuple of (sandbox_mode, use_full_auto, use_dangerous_flag).
-    codex exec only supports: -s (sandbox), --full-auto, and --dangerously-bypass-approvals-and-sandbox
+    codex exec supports: -s (sandbox), --full-auto, and --dangerously-bypass-approvals-and-sandbox
     """
 
     @pytest.fixture
@@ -87,11 +101,11 @@ class TestCodexExecutorPermissionModeMapping:
         assert full_auto is False
         assert dangerous is False
 
-    def test_accept_edits_maps_to_full_auto(self, executor: CodexExecutor):
-        """Test 'acceptEdits' mode uses --full-auto flag."""
+    def test_accept_edits_uses_danger_full_access(self, executor: CodexExecutor):
+        """Test 'acceptEdits' mode uses danger-full-access (Landlock unreliable)."""
         sandbox, full_auto, dangerous = executor._map_permission_mode("acceptEdits", False)
-        assert sandbox is None  # full-auto implies workspace-write
-        assert full_auto is True
+        assert sandbox == "danger-full-access"
+        assert full_auto is False
         assert dangerous is False
 
     def test_dangerous_mode_uses_bypass_flag(self, executor: CodexExecutor):
@@ -128,7 +142,6 @@ class TestCodexExecutorBuildCommand:
     """Tests for _build_command method.
 
     Codex CLI uses `codex exec` for headless operation with:
-    - -a, --ask-for-approval: untrusted|on-failure|on-request|never
     - -s, --sandbox: read-only|workspace-write|danger-full-access
     - -m, --model: Model to use
     - -C, --cd: Working directory
@@ -164,16 +177,17 @@ class TestCodexExecutorBuildCommand:
         idx = cmd.index("-s")
         assert cmd[idx + 1] == "read-only"
 
-    def test_full_auto_flag_for_accept_edits(self, executor: CodexExecutor):
-        """Test --full-auto flag is used for acceptEdits mode."""
+    def test_danger_full_access_for_accept_edits(self, executor: CodexExecutor):
+        """Test danger-full-access is used for acceptEdits (Landlock unreliable)."""
         cmd = executor._build_command(
             prompt="test",
             permission_mode="acceptEdits",
             streaming=False,
         )
 
-        assert "--full-auto" in cmd
-        assert "-s" not in cmd  # full-auto replaces sandbox flag
+        assert "-s" in cmd
+        idx = cmd.index("-s")
+        assert cmd[idx + 1] == "danger-full-access"
 
     def test_dangerous_mode_uses_bypass_flag(self, executor: CodexExecutor):
         """Test dangerous mode uses --dangerously-bypass-approvals-and-sandbox."""
@@ -184,8 +198,6 @@ class TestCodexExecutorBuildCommand:
         )
 
         assert "--dangerously-bypass-approvals-and-sandbox" in cmd
-        # Should not have -a or -s flags when using dangerous bypass
-        assert "-a" not in cmd
         assert "-s" not in cmd
 
     def test_model_option(self):
