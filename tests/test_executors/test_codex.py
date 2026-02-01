@@ -71,7 +71,8 @@ class TestCodexExecutorInit:
 class TestCodexExecutorPermissionModeMapping:
     """Tests for permission mode mapping.
 
-    Returns tuple of (approval_policy, sandbox_mode, use_dangerous_flag).
+    Returns tuple of (sandbox_mode, use_full_auto, use_dangerous_flag).
+    codex exec only supports: -s (sandbox), --full-auto, and --dangerously-bypass-approvals-and-sandbox
     """
 
     @pytest.fixture
@@ -80,46 +81,46 @@ class TestCodexExecutorPermissionModeMapping:
         return CodexExecutor(working_dir=Path("."))
 
     def test_plan_maps_to_read_only(self, executor: CodexExecutor):
-        """Test 'plan' mode maps to read-only sandbox with untrusted approval."""
-        approval, sandbox, dangerous = executor._map_permission_mode("plan", False)
-        assert approval == "untrusted"
+        """Test 'plan' mode maps to read-only sandbox."""
+        sandbox, full_auto, dangerous = executor._map_permission_mode("plan", False)
         assert sandbox == "read-only"
+        assert full_auto is False
         assert dangerous is False
 
-    def test_accept_edits_maps_to_workspace_write(self, executor: CodexExecutor):
-        """Test 'acceptEdits' mode maps to workspace-write with on-request approval."""
-        approval, sandbox, dangerous = executor._map_permission_mode("acceptEdits", False)
-        assert approval == "on-request"
-        assert sandbox == "workspace-write"
+    def test_accept_edits_maps_to_full_auto(self, executor: CodexExecutor):
+        """Test 'acceptEdits' mode uses --full-auto flag."""
+        sandbox, full_auto, dangerous = executor._map_permission_mode("acceptEdits", False)
+        assert sandbox is None  # full-auto implies workspace-write
+        assert full_auto is True
         assert dangerous is False
 
     def test_dangerous_mode_uses_bypass_flag(self, executor: CodexExecutor):
         """Test dangerous mode returns use_dangerous_flag=True."""
-        approval, sandbox, dangerous = executor._map_permission_mode("plan", True)
-        assert approval is None
+        sandbox, full_auto, dangerous = executor._map_permission_mode("plan", True)
         assert sandbox is None
+        assert full_auto is False
         assert dangerous is True
 
     def test_dangerous_mode_overrides_permission_mode(self, executor: CodexExecutor):
         """Test dangerous mode overrides any permission mode."""
-        approval, sandbox, dangerous = executor._map_permission_mode("acceptEdits", True)
+        sandbox, full_auto, dangerous = executor._map_permission_mode("acceptEdits", True)
         assert dangerous is True
 
-        approval, sandbox, dangerous = executor._map_permission_mode(None, True)
+        sandbox, full_auto, dangerous = executor._map_permission_mode(None, True)
         assert dangerous is True
 
     def test_none_permission_uses_default(self, executor: CodexExecutor):
         """Test None permission mode uses default (read-only)."""
-        approval, sandbox, dangerous = executor._map_permission_mode(None, False)
-        assert approval == "untrusted"
+        sandbox, full_auto, dangerous = executor._map_permission_mode(None, False)
         assert sandbox == "read-only"
+        assert full_auto is False
         assert dangerous is False
 
     def test_unknown_permission_uses_default(self, executor: CodexExecutor):
         """Test unknown permission mode uses default."""
-        approval, sandbox, dangerous = executor._map_permission_mode("unknown_mode", False)
-        assert approval == "untrusted"
+        sandbox, full_auto, dangerous = executor._map_permission_mode("unknown_mode", False)
         assert sandbox == "read-only"
+        assert full_auto is False
         assert dangerous is False
 
 
@@ -151,27 +152,28 @@ class TestCodexExecutorBuildCommand:
         assert "test prompt" in cmd
         assert "--json" in cmd
 
-    def test_approval_flag_included(self, executor: CodexExecutor):
-        """Test -a approval flag is included with correct value."""
+    def test_sandbox_flag_for_plan_mode(self, executor: CodexExecutor):
+        """Test -s sandbox flag is included for plan mode."""
         cmd = executor._build_command(
             prompt="test",
             permission_mode="plan",
             streaming=False,
         )
 
-        idx = cmd.index("-a")
-        assert cmd[idx + 1] == "untrusted"
-
-    def test_sandbox_flag_included(self, executor: CodexExecutor):
-        """Test -s sandbox flag is included with correct value."""
-        cmd = executor._build_command(
-            prompt="test",
-            permission_mode="plan",
-            streaming=False,
-        )
-
+        assert "-s" in cmd
         idx = cmd.index("-s")
         assert cmd[idx + 1] == "read-only"
+
+    def test_full_auto_flag_for_accept_edits(self, executor: CodexExecutor):
+        """Test --full-auto flag is used for acceptEdits mode."""
+        cmd = executor._build_command(
+            prompt="test",
+            permission_mode="acceptEdits",
+            streaming=False,
+        )
+
+        assert "--full-auto" in cmd
+        assert "-s" not in cmd  # full-auto replaces sandbox flag
 
     def test_dangerous_mode_uses_bypass_flag(self, executor: CodexExecutor):
         """Test dangerous mode uses --dangerously-bypass-approvals-and-sandbox."""
