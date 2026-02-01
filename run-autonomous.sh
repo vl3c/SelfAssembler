@@ -77,31 +77,44 @@ echo "  - No access to other projects"
 echo "  - Network limited to GitHub and Anthropic API"
 echo ""
 
+# Build docker args
+DOCKER_ARGS=(
+    --rm -it
+    --name "selfassembler-${TASK_NAME}"
+    # Mount project directory as /workspace (read-write)
+    -v "${PROJECT_DIR}:/workspace"
+)
+
+# Mount git config (read-only) if it exists
+if [ -f "${HOME}/.gitconfig" ]; then
+    DOCKER_ARGS+=(-v "${HOME}/.gitconfig:/home/claude/.gitconfig:ro")
+fi
+
+# Mount SSH keys for git push (read-only) if they exist
+if [ -d "${HOME}/.ssh" ]; then
+    DOCKER_ARGS+=(-v "${HOME}/.ssh:/home/claude/.ssh:ro")
+fi
+
+# Pass API keys as environment variables
+DOCKER_ARGS+=(
+    -e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}"
+    -e "GH_TOKEN=${GH_TOKEN:-$GITHUB_TOKEN}"
+)
+
+# Resource limits
+DOCKER_ARGS+=(
+    --memory="4g"
+    --cpus="2"
+)
+
+# Security: no privileged access
+DOCKER_ARGS+=(
+    --security-opt="no-new-privileges:true"
+    --cap-drop=ALL
+)
+
 # Run the container
-docker run --rm -it \
-    --name "selfassembler-${TASK_NAME}" \
-    \
-    `# Mount project directory as /workspace (read-write)` \
-    -v "${PROJECT_DIR}:/workspace" \
-    \
-    `# Mount git config (read-only) if it exists` \
-    ${HOME}/.gitconfig:+-v "${HOME}/.gitconfig:/home/claude/.gitconfig:ro"} \
-    \
-    `# Mount SSH keys for git push (read-only) if they exist` \
-    ${HOME}/.ssh:+-v "${HOME}/.ssh:/home/claude/.ssh:ro"} \
-    \
-    `# Pass API keys as environment variables` \
-    -e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}" \
-    -e "GH_TOKEN=${GH_TOKEN:-$GITHUB_TOKEN}" \
-    \
-    `# Resource limits` \
-    --memory="4g" \
-    --cpus="2" \
-    \
-    `# Security: no privileged access` \
-    --security-opt="no-new-privileges:true" \
-    --cap-drop=ALL \
-    \
+docker run "${DOCKER_ARGS[@]}" \
     selfassembler:latest \
     "$TASK" \
     --name "$TASK_NAME" \

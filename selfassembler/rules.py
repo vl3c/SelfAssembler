@@ -111,8 +111,8 @@ class RulesManager:
     def write_to_worktree(self, worktree_path: Path) -> Path | None:
         """Write rules to CLAUDE.md in the worktree.
 
-        If CLAUDE.md, agent.md, or agents.md already exists, appends rules to it.
-        Otherwise creates a new CLAUDE.md file.
+        If an existing agent rules file is found (e.g., AGENTS.md, CLAUDE.md, agent.md),
+        appends rules to it. Otherwise creates a new CLAUDE.md file.
 
         Args:
             worktree_path: Path to the worktree directory.
@@ -125,13 +125,16 @@ class RulesManager:
         if not content:
             return None
 
-        # Check for existing config files (in order of preference)
-        config_files = ["CLAUDE.md", "agent.md", "agents.md"]
+        # Check for existing config files (case-insensitive, in order of preference)
+        preferred_files = ["agents.md", "claude.md", "agent.md"]
         existing_file = None
 
-        for filename in config_files:
-            path = worktree_path / filename
-            if path.exists():
+        files_by_lower = {
+            path.name.lower(): path for path in worktree_path.iterdir() if path.is_file()
+        }
+        for filename in preferred_files:
+            path = files_by_lower.get(filename)
+            if path:
                 existing_file = path
                 break
 

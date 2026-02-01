@@ -60,8 +60,24 @@ class WebhookChannel(NotificationChannel):
         self.url = url
         self.events = events or ["workflow_complete", "workflow_failed", "approval_needed"]
 
-    def send(self, message: str, level: str = "info", data: dict | None = None) -> bool:
-        """Send notification to webhook."""
+    def send(
+        self, message: str, level: str = "info", data: dict | None = None, event: str | None = None
+    ) -> bool:
+        """Send notification to webhook.
+
+        Args:
+            message: The notification message
+            level: Severity level (info, success, warning, error)
+            data: Additional structured data
+            event: Event type for filtering (if None, always sends)
+
+        Returns:
+            True if sent successfully
+        """
+        # Filter by configured events if event type is provided
+        if event is not None and event not in self.events:
+            return True  # Silently skip filtered events
+
         payload = {
             "timestamp": datetime.now().isoformat(),
             "level": level,
@@ -136,11 +152,16 @@ class Notifier:
         """Add a notification channel."""
         self.channels.append(channel)
 
-    def _send(self, message: str, level: str = "info", data: dict | None = None) -> None:
+    def _send(
+        self, message: str, level: str = "info", data: dict | None = None, event: str | None = None
+    ) -> None:
         """Send a message to all channels."""
         for channel in self.channels:
             with contextlib.suppress(Exception):
-                channel.send(message, level, data)
+                if isinstance(channel, WebhookChannel):
+                    channel.send(message, level, data, event=event)
+                else:
+                    channel.send(message, level, data)
 
     def on_workflow_started(self, context: WorkflowContext) -> None:
         """Notify that workflow has started."""
@@ -150,16 +171,17 @@ class Notifier:
             f"Budget: ${context.budget_limit_usd:.2f}",
             level="info",
             data={"task_name": context.task_name, "budget": context.budget_limit_usd},
+            event="workflow_started",
         )
 
     def on_phase_started(self, phase: str) -> None:
         """Notify that a phase has started."""
-        self._send(f"Starting phase: {phase}", level="info")
+        self._send(f"Starting phase: {phase}", level="info", event="phase_started")
 
     def on_phase_complete(self, phase: str, result: PhaseResult) -> None:
         """Notify that a phase completed successfully."""
         cost_str = f" (${result.cost_usd:.2f})" if result.cost_usd > 0 else ""
-        self._send(f"Phase complete: {phase}{cost_str}", level="success")
+        self._send(f"Phase complete: {phase}{cost_str}", level="success", event="phase_complete")
 
     def on_phase_failed(self, phase: str, result: PhaseResult, will_retry: bool = False) -> None:
         """Notify that a phase failed."""
@@ -170,6 +192,7 @@ class Notifier:
             f"Phase failed: {phase}{retry_msg}\nError: {error_preview}",
             level=level,
             data={"phase": phase, "error": result.error, "will_retry": will_retry},
+            event="phase_failed",
         )
 
     def on_phase_retry(self, phase: str, attempt: int, max_retries: int) -> None:
@@ -178,6 +201,7 @@ class Notifier:
             f"Retrying phase: {phase} (attempt {attempt + 1}/{max_retries + 1})",
             level="info",
             data={"phase": phase, "attempt": attempt, "max_retries": max_retries},
+            event="phase_retry",
         )
 
     def on_approval_needed(self, phase: str, artifacts: dict[str, Any]) -> None:
@@ -189,6 +213,7 @@ class Notifier:
             f"Artifacts: {artifact_info}",
             level="warning",
             data={"phase": phase, "artifacts": artifacts},
+            event="approval_needed",
         )
 
     def on_workflow_complete(self, context: WorkflowContext) -> None:
@@ -213,6 +238,7 @@ Ready for human review.
                 "cost_usd": context.total_cost_usd,
                 "duration_s": context.elapsed_time(),
             },
+            event="workflow_complete",
         )
 
     def on_workflow_failed(self, context: WorkflowContext, error: Exception) -> None:
@@ -236,6 +262,7 @@ Resume with: selfassembler --resume {context.checkpoint_id}
                 "cost_usd": context.total_cost_usd,
                 "checkpoint_id": context.checkpoint_id,
             },
+            event="workflow_failed",
         )
 
     def on_budget_warning(self, context: WorkflowContext, threshold: float = 0.8) -> None:
@@ -251,11 +278,12 @@ Resume with: selfassembler --resume {context.checkpoint_id}
                     "budget_limit": context.budget_limit_usd,
                     "usage_percent": usage * 100,
                 },
+                event="budget_warning",
             )
 
     def on_checkpoint_created(self, checkpoint_id: str) -> None:
         """Notify that a checkpoint was created."""
-        self._send(f"Checkpoint created: {checkpoint_id}", level="info")
+        self._send(f"Checkpoint created: {checkpoint_id}", level="info", event="checkpoint_created")
 
     def on_stream_event(
         self,

@@ -71,6 +71,10 @@ class Phase(ABC):
         """Get the configuration for this phase."""
         return self.config.get_phase_config(self.name)
 
+    def _dangerous_mode(self) -> bool:
+        """Return whether to skip permissions in autonomous mode."""
+        return self.config.autonomous_mode and self.config.claude.dangerous_mode
+
 
 class PreflightPhase(Phase):
     """Validate environment before starting workflow."""
@@ -273,6 +277,7 @@ Format the research as markdown with clear sections.
             allowed_tools=self.allowed_tools,
             max_turns=phase_config.max_turns,
             timeout=phase_config.timeout,
+            dangerous_mode=self._dangerous_mode(),
             working_dir=self.context.get_working_dir(),
         )
 
@@ -345,6 +350,7 @@ Plan format:
             allowed_tools=self.allowed_tools,
             max_turns=phase_config.max_turns,
             timeout=phase_config.timeout,
+            dangerous_mode=self._dangerous_mode(),
             working_dir=self.context.get_working_dir(),
         )
 
@@ -434,6 +440,7 @@ Be thorough but constructive. The goal is to improve the plan, not block it.
             allowed_tools=self.allowed_tools,
             max_turns=phase_config.max_turns,
             timeout=phase_config.timeout,
+            dangerous_mode=self._dangerous_mode(),
             working_dir=self.context.get_working_dir(),
         )
 
@@ -480,7 +487,7 @@ Guidelines:
 Mark completed items in the plan file as you progress.
 """
         phase_config = self.get_phase_config()
-        dangerous_mode = self.config.autonomous_mode and self.config.claude.dangerous_mode
+        dangerous_mode = self._dangerous_mode()
 
         result = self.executor.execute(
             prompt=prompt,
@@ -536,6 +543,7 @@ Do NOT run the tests yet (separate phase).
             allowed_tools=self.allowed_tools,
             max_turns=phase_config.max_turns,
             timeout=phase_config.timeout,
+            dangerous_mode=self._dangerous_mode(),
             working_dir=self.context.get_working_dir(),
         )
 
@@ -629,6 +637,7 @@ Report the final test results.
             allowed_tools=self.allowed_tools,
             max_turns=phase_config.max_turns,
             timeout=phase_config.timeout,
+            dangerous_mode=self._dangerous_mode(),
             working_dir=self.context.get_working_dir(),
         )
 
@@ -664,6 +673,7 @@ Do NOT run tests yet (I will run them after your fixes).
             prompt=prompt,
             allowed_tools=["Read", "Edit", "Grep"],
             max_turns=15,
+            dangerous_mode=self._dangerous_mode(),
             working_dir=self.context.get_working_dir(),
         )
 
@@ -733,6 +743,7 @@ If no issues found, note that the code looks good.
             allowed_tools=self.allowed_tools,
             max_turns=phase_config.max_turns,
             timeout=phase_config.timeout,
+            dangerous_mode=self._dangerous_mode(),
             working_dir=self.context.get_working_dir(),
         )
 
@@ -781,6 +792,7 @@ Focus on fixing actual bugs and security issues first.
             allowed_tools=self.allowed_tools,
             max_turns=phase_config.max_turns,
             timeout=phase_config.timeout,
+            dangerous_mode=self._dangerous_mode(),
             working_dir=self.context.get_working_dir(),
         )
 
@@ -903,6 +915,7 @@ Make the minimal changes needed to fix the lint errors.
             prompt=prompt,
             allowed_tools=["Read", "Edit"],
             max_turns=10,
+            dangerous_mode=self._dangerous_mode(),
             working_dir=self.context.get_working_dir(),
         )
         self.context.add_cost(self.name, result.cost_usd)
@@ -922,6 +935,7 @@ Add type annotations, fix type mismatches, or add type: ignore comments where ap
             prompt=prompt,
             allowed_tools=["Read", "Edit"],
             max_turns=10,
+            dangerous_mode=self._dangerous_mode(),
             working_dir=self.context.get_working_dir(),
         )
         self.context.add_cost(self.name, result.cost_usd)
@@ -943,6 +957,7 @@ Run with --fix flags where available. Report any unfixable issues.
             prompt=prompt,
             allowed_tools=["Bash", "Read"],
             max_turns=10,
+            dangerous_mode=self._dangerous_mode(),
             working_dir=self.context.get_working_dir(),
         )
         self.context.add_cost(self.name, result.cost_usd)
@@ -995,6 +1010,7 @@ Update documentation for: {self.context.task_description}
             allowed_tools=self.allowed_tools,
             max_turns=phase_config.max_turns,
             timeout=phase_config.timeout,
+            dangerous_mode=self._dangerous_mode(),
             working_dir=self.context.get_working_dir(),
         )
 
@@ -1080,6 +1096,7 @@ Types: feat, fix, docs, style, refactor, test, chore
             allowed_tools=self.allowed_tools,
             max_turns=phase_config.max_turns,
             timeout=phase_config.timeout,
+            dangerous_mode=self._dangerous_mode(),
             working_dir=workdir,
         )
 
@@ -1167,6 +1184,7 @@ If conflicts are too complex to resolve confidently, abort with `git rebase --ab
             prompt=prompt,
             allowed_tools=self.allowed_tools,
             max_turns=20,
+            dangerous_mode=self._dangerous_mode(),
             working_dir=self.context.get_working_dir(),
         )
 
@@ -1234,6 +1252,7 @@ Return the PR URL after creation.
                 allowed_tools=self.allowed_tools,
                 max_turns=phase_config.max_turns,
                 timeout=phase_config.timeout,
+                dangerous_mode=self._dangerous_mode(),
                 working_dir=workdir,
             )
 
@@ -1316,6 +1335,7 @@ Be critical but fair. Look for real issues, not style nitpicks.
             allowed_tools=self.allowed_tools,
             max_turns=phase_config.max_turns,
             timeout=phase_config.timeout,
+            dangerous_mode=self._dangerous_mode(),
             working_dir=self.context.get_working_dir(),
         )
 

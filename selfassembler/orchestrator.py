@@ -519,7 +519,13 @@ class Orchestrator:
 
         # Check if this specific phase has an approval gate configured
         gates = self.config.approvals.gates
-        return getattr(gates, phase.name, False) or phase.approval_gate
+        phase_name_normalized = phase.name.replace("-", "_")
+        gate_config = getattr(gates, phase_name_normalized, None)
+        if gate_config is True:
+            return True
+        if gate_config is False:
+            return False
+        return phase.approval_gate
 
     def _wait_for_approval(self, phase_name: str, artifacts: dict) -> None:
         """Wait for approval before continuing."""

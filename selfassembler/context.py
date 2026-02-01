@@ -71,9 +71,9 @@ class WorkflowContext:
         self.total_cost_usd += cost
         self.phase_costs[phase] = self.phase_costs.get(phase, 0.0) + cost
 
-        if self.total_cost_usd >= self.budget_limit_usd:
+        if self.total_cost_usd > self.budget_limit_usd:
             raise BudgetExceededError(
-                f"Budget exceeded: ${self.total_cost_usd:.2f} >= ${self.budget_limit_usd:.2f}",
+                f"Budget exceeded: ${self.total_cost_usd:.2f} > ${self.budget_limit_usd:.2f}",
                 current_cost=self.total_cost_usd,
                 budget_limit=self.budget_limit_usd,
             )
