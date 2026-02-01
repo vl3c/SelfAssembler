@@ -12,9 +12,11 @@ from selfassembler.phases import (
     PHASE_CLASSES,
     PHASE_NAMES,
     CodeReviewPhase,
+    ConflictCheckPhase,
     ImplementationPhase,
     PlanningPhase,
     PlanReviewPhase,
+    PRCreationPhase,
     PreflightPhase,
     ResearchPhase,
 )
@@ -147,3 +149,103 @@ class TestCodeReviewPhase:
         """Test code review uses fresh context."""
         assert CodeReviewPhase.fresh_context is True
         assert CodeReviewPhase.claude_mode == "plan"
+
+
+class TestConflictCheckPhase:
+    """Tests for ConflictCheckPhase."""
+
+    @pytest.fixture
+    def context(self) -> WorkflowContext:
+        """Create a workflow context for testing."""
+        return WorkflowContext(
+            task_description="Test",
+            task_name="test",
+            repo_path=Path.cwd(),
+            plans_dir=Path.cwd() / "plans",
+        )
+
+    def test_stash_restored_on_rebase_error(self, context: WorkflowContext):
+        """Ensure stash is restored when rebase raises an error."""
+        executor = MockClaudeExecutor()
+        config = WorkflowConfig()
+        phase = ConflictCheckPhase(context, executor, config)
+
+        mock_git = MagicMock()
+        mock_git.has_remote.return_value = True
+        mock_git.stash.return_value = True
+        mock_git.rebase.side_effect = Exception("rebase failed")
+
+        with patch("selfassembler.phases.GitManager", return_value=mock_git):
+            result = phase.run()
+
+        assert result.success is False
+        assert "rebase failed" in result.error
+        mock_git.stash_pop.assert_called_once_with(cwd=phase.context.get_working_dir())
+
+    def test_stash_popped_after_abort_on_conflicts(self, context: WorkflowContext):
+        """Ensure stash is restored after aborting a conflicted rebase."""
+        executor = MockClaudeExecutor()
+        config = WorkflowConfig()
+        phase = ConflictCheckPhase(context, executor, config)
+
+        mock_git = MagicMock()
+        mock_git.has_remote.return_value = True
+        mock_git.stash.return_value = True
+        mock_git.rebase.return_value = (False, ["file.txt"])
+
+        with patch("selfassembler.phases.GitManager", return_value=mock_git), patch.object(
+            ConflictCheckPhase, "_resolve_conflicts_with_claude", return_value=False
+        ):
+            phase.run()
+
+        calls = [call[0] for call in mock_git.method_calls]
+        assert "abort_rebase" in calls
+        assert "stash_pop" in calls
+        assert calls.index("abort_rebase") < calls.index("stash_pop")
+
+    def test_conflict_prompt_uses_rebase_target(self, context: WorkflowContext):
+        """Ensure conflict prompt references the actual rebase target."""
+        executor = MockClaudeExecutor()
+        config = WorkflowConfig()
+        phase = ConflictCheckPhase(context, executor, config)
+
+        executor.execute = MagicMock(
+            return_value=MagicMock(is_error=False, cost_usd=0.0)
+        )
+
+        phase._resolve_conflicts_with_claude(["file.txt"], "origin/main")
+
+        prompt = executor.execute.call_args.kwargs["prompt"]
+        assert "origin/main" in prompt
+
+
+class TestPRCreationPhase:
+    """Tests for PRCreationPhase."""
+
+    @pytest.fixture
+    def context(self) -> WorkflowContext:
+        """Create a workflow context for testing."""
+        return WorkflowContext(
+            task_description="Test",
+            task_name="test",
+            repo_path=Path.cwd(),
+            plans_dir=Path.cwd() / "plans",
+        )
+
+    def test_skips_when_no_remote(self, context: WorkflowContext):
+        """PR creation should be skipped for local-only repos."""
+        executor = MockClaudeExecutor()
+        config = WorkflowConfig()
+        phase = PRCreationPhase(context, executor, config)
+
+        context.branch_name = "feature/test"
+
+        mock_git = MagicMock()
+        mock_git.has_remote.return_value = False
+
+        with patch("selfassembler.phases.GitManager", return_value=mock_git):
+            result = phase.run()
+
+        assert result.success is True
+        assert result.artifacts["skipped"].startswith("No remote configured")
+        mock_git.push.assert_not_called()

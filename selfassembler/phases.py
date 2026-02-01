@@ -1136,6 +1136,10 @@ class ConflictCheckPhase(Phase):
         git = GitManager(workdir)
         base_branch = self.config.git.base_branch
 
+        had_changes = False
+        rebase_target = base_branch
+        result: PhaseResult | None = None
+
         try:
             # Fetch latest (no-op if no remote)
             git.fetch()
@@ -1146,39 +1150,51 @@ class ConflictCheckPhase(Phase):
             # Determine rebase target - use origin if available, otherwise local branch
             if git.has_remote():
                 rebase_target = f"origin/{base_branch}"
-            else:
-                rebase_target = base_branch
 
             # Try rebase
             success, conflicts = git.rebase(rebase_target, cwd=workdir)
 
-            # Restore stashed changes
-            if had_changes:
-                git.stash_pop(cwd=workdir)
-
             if success:
-                return PhaseResult(success=True)
+                result = PhaseResult(success=True)
+            else:
+                # Conflicts detected - try to resolve with Claude
+                git.abort_rebase(cwd=workdir)
 
-            # Conflicts detected - try to resolve with Claude
-            git.abort_rebase(cwd=workdir)
-
-            resolve_success = self._resolve_conflicts_with_claude(conflicts)
-            if resolve_success:
-                return PhaseResult(success=True, artifacts={"conflicts_resolved": conflicts})
-
-            return PhaseResult(
-                success=False,
-                error=f"Merge conflicts could not be auto-resolved: {', '.join(conflicts)}",
-                artifacts={"conflicted_files": conflicts},
-            )
+                resolve_success = self._resolve_conflicts_with_claude(conflicts, rebase_target)
+                if resolve_success:
+                    result = PhaseResult(success=True, artifacts={"conflicts_resolved": conflicts})
+                else:
+                    result = PhaseResult(
+                        success=False,
+                        error=f"Merge conflicts could not be auto-resolved: {', '.join(conflicts)}",
+                        artifacts={"conflicted_files": conflicts},
+                    )
 
         except Exception as e:
-            return PhaseResult(success=False, error=str(e))
+            result = PhaseResult(success=False, error=str(e))
+        finally:
+            if had_changes:
+                restored = False
+                with contextlib.suppress(Exception):
+                    restored = git.stash_pop(cwd=workdir)
+                if not restored:
+                    message = (
+                        "Failed to restore stashed changes. "
+                        "Your stash may still be available via `git stash list`."
+                    )
+                    if result is None or result.success:
+                        result = PhaseResult(success=False, error=message)
+                    else:
+                        result.error = f"{result.error}\n{message}" if result.error else message
 
-    def _resolve_conflicts_with_claude(self, conflicts: list[str]) -> bool:
+        return result if result is not None else PhaseResult(success=False, error="Unknown error")
+
+    def _resolve_conflicts_with_claude(
+        self, conflicts: list[str], rebase_target: str
+    ) -> bool:
         """Use Claude to resolve merge conflicts."""
         prompt = f"""
-Merge conflicts detected during rebase onto origin/{self.config.git.base_branch}.
+Merge conflicts detected during rebase onto {rebase_target}.
 
 Conflicted files: {", ".join(conflicts)}
 
