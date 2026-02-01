@@ -306,6 +306,32 @@ class GitManager:
         result = self._run(["rebase", "--continue"], cwd=cwd, check=False)
         return result.returncode == 0
 
+    def stash(self, cwd: Path | None = None, include_untracked: bool = True) -> bool:
+        """Stash uncommitted changes.
+
+        Args:
+            cwd: Working directory
+            include_untracked: Include untracked files in stash
+
+        Returns:
+            True if changes were stashed, False if nothing to stash
+        """
+        args = ["stash", "push"]
+        if include_untracked:
+            args.append("--include-untracked")
+        result = self._run(args, cwd=cwd, check=False)
+        # "No local changes to save" means nothing was stashed
+        return "No local changes" not in result.stdout
+
+    def stash_pop(self, cwd: Path | None = None) -> bool:
+        """Pop the most recent stash.
+
+        Returns:
+            True if stash was popped successfully, False otherwise
+        """
+        result = self._run(["stash", "pop"], cwd=cwd, check=False)
+        return result.returncode == 0
+
     def get_log(
         self,
         count: int = 10,

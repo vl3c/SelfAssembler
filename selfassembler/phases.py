@@ -1140,6 +1140,9 @@ class ConflictCheckPhase(Phase):
             # Fetch latest (no-op if no remote)
             git.fetch()
 
+            # Stash any uncommitted changes before rebase
+            had_changes = git.stash(cwd=workdir)
+
             # Determine rebase target - use origin if available, otherwise local branch
             if git.has_remote():
                 rebase_target = f"origin/{base_branch}"
@@ -1148,6 +1151,10 @@ class ConflictCheckPhase(Phase):
 
             # Try rebase
             success, conflicts = git.rebase(rebase_target, cwd=workdir)
+
+            # Restore stashed changes
+            if had_changes:
+                git.stash_pop(cwd=workdir)
 
             if success:
                 return PhaseResult(success=True)
