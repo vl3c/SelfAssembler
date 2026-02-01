@@ -362,6 +362,100 @@ class TestCodexExecutorParseResult:
 
         assert result.output == "Output value"
 
+    def test_parse_jsonl_with_result_event(self, executor: CodexExecutor):
+        """Test parsing JSONL output with a result event."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = """{"type": "assistant", "content": "Working on it..."}
+{"type": "tool_use", "name": "Read", "file": "test.py"}
+{"type": "result", "result": "Task completed successfully", "session_id": "sess-123", "num_turns": 3}"""
+
+        result = executor._parse_result(mock_result, 2000)
+
+        assert result.session_id == "sess-123"
+        assert result.output == "Task completed successfully"
+        assert result.num_turns == 3
+        assert result.is_error is False
+        assert result.agent_type == "codex"
+
+    def test_parse_jsonl_prefers_last_result_event(self, executor: CodexExecutor):
+        """Test that JSONL parsing prefers the last result event."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = """{"type": "result", "result": "First result"}
+{"type": "assistant", "content": "More work"}
+{"type": "result", "result": "Final result", "num_turns": 5}"""
+
+        result = executor._parse_result(mock_result, 1500)
+
+        # Should use the last result event
+        assert result.output == "Final result"
+        assert result.num_turns == 5
+
+    def test_parse_jsonl_without_result_event(self, executor: CodexExecutor):
+        """Test parsing JSONL output without explicit result event."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = """{"type": "assistant", "content": "Hello"}
+{"type": "assistant", "text": "World"}
+{"type": "tool_result", "output": "Done"}"""
+
+        result = executor._parse_result(mock_result, 1000)
+
+        # Should extract content from events
+        assert "Hello" in result.output
+        assert "World" in result.output
+        assert "Done" in result.output
+        assert result.num_turns == 3
+
+    def test_parse_mixed_json_and_text(self, executor: CodexExecutor):
+        """Test parsing mixed JSON and plain text output."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = """Some debug output
+{"type": "result", "result": "Success"}
+More text"""
+
+        result = executor._parse_result(mock_result, 1000)
+
+        # Should still find the JSON result event
+        assert result.output == "Success"
+
+    def test_parse_jsonl_with_error_returncode(self, executor: CodexExecutor):
+        """Test JSONL parsing with non-zero return code."""
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = """{"type": "result", "result": "Partial work", "is_error": false}"""
+
+        result = executor._parse_result(mock_result, 1000)
+
+        # is_error should be True because returncode != 0
+        assert result.is_error is True
+        assert result.output == "Partial work"
+
+    def test_parse_empty_jsonl_events(self, executor: CodexExecutor):
+        """Test parsing when events have no useful content."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = """{"type": "start"}
+{"type": "end"}"""
+
+        result = executor._parse_result(mock_result, 1000)
+
+        # Should fall back to raw output since no content fields found
+        assert result.num_turns == 2
+        # Output may be empty or contain the raw JSON
+
+    def test_parse_jsonl_duration_from_result_event(self, executor: CodexExecutor):
+        """Test that duration_ms is extracted from result event."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = """{"type": "result", "result": "Done", "duration_ms": 5000}"""
+
+        result = executor._parse_result(mock_result, 1000)  # Default would be 1000
+
+        assert result.duration_ms == 5000
+
 
 class TestCodexExecutorParseStreamEvent:
     """Tests for _parse_stream_event method."""

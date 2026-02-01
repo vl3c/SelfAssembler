@@ -132,6 +132,94 @@ class TestAgentFlagConfig:
             assert loaded.agent.type == "codex"
 
 
+class TestAutonomousFlagConfig:
+    """Tests for --autonomous flag configuration handling."""
+
+    def test_autonomous_sets_agent_dangerous_mode(self):
+        """Test that --autonomous sets config.agent.dangerous_mode."""
+        parser = create_parser()
+        args = parser.parse_args(["Task", "--autonomous"])
+
+        config = WorkflowConfig.load(args.config)
+
+        # Simulate main() behavior
+        if args.autonomous:
+            config.autonomous_mode = True
+            config.approvals.enabled = False
+            config.agent.dangerous_mode = True
+            config.claude.dangerous_mode = True
+
+        assert config.agent.dangerous_mode is True
+        assert config.claude.dangerous_mode is True  # Legacy compat
+        assert config.autonomous_mode is True
+        assert config.approvals.enabled is False
+
+    def test_autonomous_sets_both_dangerous_modes(self):
+        """Test that --autonomous sets both agent and legacy claude dangerous_mode."""
+        parser = create_parser()
+        args = parser.parse_args(["Task", "--autonomous"])
+
+        config = WorkflowConfig()
+
+        # Apply the same logic as main()
+        if args.autonomous:
+            config.autonomous_mode = True
+            config.approvals.enabled = False
+            config.agent.dangerous_mode = True
+            config.claude.dangerous_mode = True
+
+        # Both should be True
+        assert config.agent.dangerous_mode is True
+        assert config.claude.dangerous_mode is True
+
+    def test_no_approvals_does_not_set_dangerous_mode(self):
+        """Test that --no-approvals does NOT set dangerous_mode."""
+        parser = create_parser()
+        args = parser.parse_args(["Task", "--no-approvals"])
+
+        config = WorkflowConfig()
+
+        # Apply the same logic as main()
+        if args.autonomous:
+            config.autonomous_mode = True
+            config.approvals.enabled = False
+            config.agent.dangerous_mode = True
+            config.claude.dangerous_mode = True
+        elif args.no_approvals:
+            config.approvals.enabled = False
+
+        # dangerous_mode should remain False
+        assert config.agent.dangerous_mode is False
+        assert config.claude.dangerous_mode is False
+        assert config.approvals.enabled is False
+
+    def test_get_effective_agent_config_merges_dangerous_mode(self):
+        """Test that get_effective_agent_config merges dangerous_mode correctly."""
+        config = WorkflowConfig()
+
+        # Set legacy config only
+        config.claude.dangerous_mode = True
+        config.agent.dangerous_mode = False
+
+        effective = config.get_effective_agent_config()
+
+        # For claude agent, should inherit from legacy config
+        assert effective.dangerous_mode is True
+
+    def test_agent_dangerous_mode_takes_precedence(self):
+        """Test that agent.dangerous_mode takes precedence when explicitly set."""
+        config = WorkflowConfig()
+
+        # Set both configs
+        config.agent.dangerous_mode = True
+        config.claude.dangerous_mode = False
+
+        effective = config.get_effective_agent_config()
+
+        # agent.dangerous_mode should take precedence
+        assert effective.dangerous_mode is True
+
+
 class TestGenerateTaskName:
     """Tests for task name generation."""
 

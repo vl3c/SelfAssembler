@@ -409,10 +409,14 @@ class CodexExecutor(AgentExecutor):
     def _parse_result(
         self, result: subprocess.CompletedProcess, elapsed_ms: int
     ) -> ExecutionResult:
-        """Parse the output from Codex CLI."""
+        """Parse the output from Codex CLI.
+
+        Handles both single JSON object and JSONL (multiple JSON objects per line)
+        output formats. For JSONL, prefers the last "result" type event.
+        """
         raw_output = result.stdout
 
-        # Try to parse as JSON first
+        # Try to parse as single JSON object first
         try:
             data = json.loads(raw_output)
             return ExecutionResult(
@@ -426,17 +430,74 @@ class CodexExecutor(AgentExecutor):
                 agent_type=self.AGENT_TYPE,
             )
         except json.JSONDecodeError:
-            # Plain text output
+            pass
+
+        # Try JSONL parsing (multiple JSON objects, one per line)
+        events: list[dict[str, Any]] = []
+        text_lines: list[str] = []
+
+        for line in raw_output.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                text_lines.append(line)
+
+        if events:
+            # Look for a "result" type event, prefer the last one
+            result_event = None
+            for event in reversed(events):
+                if event.get("type") == "result":
+                    result_event = event
+                    break
+
+            if result_event:
+                return ExecutionResult(
+                    session_id=result_event.get("session_id", ""),
+                    output=result_event.get("result", result_event.get("output", "")),
+                    cost_usd=0.0,
+                    duration_ms=result_event.get("duration_ms", elapsed_ms),
+                    num_turns=result_event.get("num_turns", len(events)),
+                    is_error=result_event.get("is_error", False)
+                    or result.returncode != 0,
+                    raw_output=raw_output,
+                    agent_type=self.AGENT_TYPE,
+                )
+
+            # No result event, but we have events - extract content from them
+            output_parts = []
+            for event in events:
+                if "content" in event:
+                    output_parts.append(event["content"])
+                elif "text" in event:
+                    output_parts.append(event["text"])
+                elif "output" in event:
+                    output_parts.append(event["output"])
+
             return ExecutionResult(
                 session_id="",
-                output=raw_output.strip(),
+                output="\n".join(output_parts) if output_parts else raw_output.strip(),
                 cost_usd=0.0,
                 duration_ms=elapsed_ms,
-                num_turns=0,
+                num_turns=len(events),
                 is_error=result.returncode != 0,
                 raw_output=raw_output,
                 agent_type=self.AGENT_TYPE,
             )
+
+        # Plain text output (no valid JSON found)
+        return ExecutionResult(
+            session_id="",
+            output=raw_output.strip(),
+            cost_usd=0.0,
+            duration_ms=elapsed_ms,
+            num_turns=0,
+            is_error=result.returncode != 0,
+            raw_output=raw_output,
+            agent_type=self.AGENT_TYPE,
+        )
 
     def check_available(self) -> tuple[bool, str]:
         """Check if Codex CLI is available."""
