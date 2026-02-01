@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class AgentConfig(BaseModel):
@@ -202,6 +202,17 @@ class DebateConfig(BaseModel):
     # Must be odd so primary agent always closes the debate
     max_exchange_messages: int = Field(default=3, ge=3, le=5)
     message_timeout_seconds: int = Field(default=180)
+
+    @field_validator("max_exchange_messages")
+    @classmethod
+    def validate_odd_messages(cls, v: int) -> int:
+        """Ensure max_exchange_messages is odd so primary agent closes the debate."""
+        if v % 2 == 0:
+            raise ValueError(
+                f"max_exchange_messages must be odd (got {v}). "
+                "Primary agent must close the debate for proper synthesis."
+            )
+        return v
 
     # Output settings
     keep_intermediate_files: bool = Field(default=True)
