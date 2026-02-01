@@ -232,6 +232,15 @@ class TestPhasePermissionModeHelper:
         # claude_mode should take precedence
         assert phase._get_permission_mode() == "plan"
 
+    def test_planning_phase_returns_accept_edits_for_codex(self, context: WorkflowContext):
+        """Test that planning phase returns acceptEdits for codex to allow writing plan files."""
+        executor = MockCodexExecutor()
+        config = WorkflowConfig()
+        config.agent.type = "codex"
+        phase = PlanningPhase(context, executor, config)
+
+        assert phase._get_permission_mode() == "acceptEdits"
+
     def test_code_review_returns_plan(self, context: WorkflowContext, config: WorkflowConfig):
         """Test that code review phase returns 'plan' (read-only)."""
         executor = MockClaudeExecutor()
@@ -239,6 +248,15 @@ class TestPhasePermissionModeHelper:
 
         # CodeReviewPhase has claude_mode = "plan"
         assert phase._get_permission_mode() == "plan"
+
+    def test_code_review_returns_accept_edits_for_codex(self, context: WorkflowContext):
+        """Test that code review returns acceptEdits for codex when write tools are needed."""
+        executor = MockCodexExecutor()
+        config = WorkflowConfig()
+        config.agent.type = "codex"
+        phase = CodeReviewPhase(context, executor, config)
+
+        assert phase._get_permission_mode() == "acceptEdits"
 
     def test_all_write_phases_return_accept_edits(self, context: WorkflowContext, config: WorkflowConfig):
         """Test that all phases with write tools but no claude_mode return acceptEdits."""

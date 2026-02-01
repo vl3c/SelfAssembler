@@ -87,12 +87,18 @@ class Phase(ABC):
         This ensures write-heavy phases get writable sandbox access for agents
         like Codex that default to read-only mode.
         """
-        if self.claude_mode is not None:
-            return self.claude_mode
-
         # Check if this phase needs write access
         write_tools = {"Write", "Edit", "Bash"}
-        if self.allowed_tools and write_tools & set(self.allowed_tools):
+        needs_write = bool(self.allowed_tools and write_tools & set(self.allowed_tools))
+
+        if self.claude_mode is not None:
+            if self.claude_mode == "plan" and needs_write:
+                agent_type = self.config.get_effective_agent_config().type
+                if agent_type == "codex":
+                    return "acceptEdits"
+            return self.claude_mode
+
+        if needs_write:
             return "acceptEdits"
 
         return None
