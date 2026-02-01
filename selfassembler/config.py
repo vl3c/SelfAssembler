@@ -199,18 +199,18 @@ class DebateConfig(BaseModel):
     turn_timeout_seconds: int = Field(default=300)
 
     # Message exchange settings (Turn 2)
-    # Must be odd so Claude always closes the debate (Claude → Codex → Claude)
+    # Must be odd so primary agent always closes the debate
     max_exchange_messages: int = Field(default=3, ge=3, le=5)
     message_timeout_seconds: int = Field(default=180)
 
     @field_validator("max_exchange_messages")
     @classmethod
     def validate_odd_messages(cls, v: int) -> int:
-        """Ensure max_exchange_messages is odd so Claude closes the debate."""
+        """Ensure max_exchange_messages is odd so primary agent closes the debate."""
         if v % 2 == 0:
             raise ValueError(
                 f"max_exchange_messages must be odd (got {v}). "
-                "Claude must close the debate for proper synthesis."
+                "Primary agent must close the debate for proper synthesis."
             )
         return v
 

@@ -302,3 +302,105 @@ class TestBackwardCompatibility:
 
         assert OldClaudeExecutor is NewClaudeExecutor
         assert OldExecutionResult is NewExecutionResult
+
+
+class TestDetectInstalledAgents:
+    """Tests for detect_installed_agents function."""
+
+    def test_returns_dict(self):
+        """Test function returns a dictionary."""
+        from selfassembler.executors import detect_installed_agents
+
+        result = detect_installed_agents()
+        assert isinstance(result, dict)
+
+    def test_contains_registered_agents(self):
+        """Test result contains all registered agents."""
+        from selfassembler.executors import detect_installed_agents, list_available_agents
+
+        result = detect_installed_agents()
+        for agent in list_available_agents():
+            assert agent in result
+            assert isinstance(result[agent], bool)
+
+
+class TestGetAvailableAgents:
+    """Tests for get_available_agents function."""
+
+    def test_returns_list(self):
+        """Test function returns a list."""
+        from selfassembler.executors import get_available_agents
+
+        result = get_available_agents()
+        assert isinstance(result, list)
+
+    def test_only_installed_agents(self):
+        """Test only returns installed agents."""
+        from selfassembler.executors import detect_installed_agents, get_available_agents
+
+        available = get_available_agents()
+        installed = detect_installed_agents()
+
+        for agent in available:
+            assert installed[agent] is True
+
+
+class TestAutoConfigureAgents:
+    """Tests for auto_configure_agents function."""
+
+    def test_returns_tuple(self):
+        """Test function returns a tuple."""
+        from selfassembler.executors import auto_configure_agents
+
+        result = auto_configure_agents()
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+
+    def test_tuple_structure(self):
+        """Test tuple has correct types."""
+        from selfassembler.executors import auto_configure_agents
+
+        primary, secondary, debate_enabled = auto_configure_agents()
+
+        assert isinstance(primary, str)
+        assert secondary is None or isinstance(secondary, str)
+        assert isinstance(debate_enabled, bool)
+
+    def test_primary_is_valid_agent(self):
+        """Test primary agent is a valid registered type."""
+        from selfassembler.executors import auto_configure_agents, list_available_agents
+
+        primary, _, _ = auto_configure_agents()
+        assert primary in list_available_agents()
+
+    def test_debate_enabled_when_secondary_set(self):
+        """Test debate is enabled only when secondary agent exists."""
+        from selfassembler.executors import auto_configure_agents
+
+        _, secondary, debate_enabled = auto_configure_agents()
+
+        if secondary is not None:
+            assert debate_enabled is True
+        # Note: debate can be False even when secondary is None
+
+
+class TestAutoDetectionPackageExports:
+    """Tests for new auto-detection exports."""
+
+    def test_import_detect_installed_agents(self):
+        """Test detect_installed_agents can be imported."""
+        from selfassembler.executors import detect_installed_agents
+
+        assert detect_installed_agents is not None
+
+    def test_import_get_available_agents(self):
+        """Test get_available_agents can be imported."""
+        from selfassembler.executors import get_available_agents
+
+        assert get_available_agents is not None
+
+    def test_import_auto_configure_agents(self):
+        """Test auto_configure_agents can be imported."""
+        from selfassembler.executors import auto_configure_agents
+
+        assert auto_configure_agents is not None

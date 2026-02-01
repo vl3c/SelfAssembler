@@ -77,6 +77,21 @@ Examples:
         help="Disable approval gates (still prompts for permissions unless --autonomous)",
     )
 
+    # Debate mode (mutually exclusive)
+    debate_group = mode_group.add_mutually_exclusive_group()
+    debate_group.add_argument(
+        "--debate",
+        action="store_true",
+        default=None,
+        help="Enable multi-agent debate mode (Claude + Codex). "
+        "Auto-enabled when both agents are installed.",
+    )
+    debate_group.add_argument(
+        "--no-debate",
+        action="store_true",
+        help="Disable multi-agent debate, use single agent only.",
+    )
+
     # Resume and skip
     resume_group = parser.add_argument_group("resume options")
     resume_group.add_argument(
@@ -534,9 +549,72 @@ def main(args: list[str] | None = None) -> int:
     if parsed.plans_dir:
         config.plans_dir = str(parsed.plans_dir)
 
+    # Apply debate mode (auto-detect if not specified)
+    # This must happen before agent selection to allow auto-detect to set primary
+    from selfassembler.executors import auto_configure_agents, detect_installed_agents
+
+    detected_primary, detected_secondary, detected_debate = auto_configure_agents()
+    installed = detect_installed_agents()
+
+    if parsed.no_debate:
+        config.debate.enabled = False
+    elif parsed.debate:
+        config.debate.enabled = True
+        # If debate forced but agents not configured, use auto-detected values
+        if config.debate.primary_agent == "claude" and config.debate.secondary_agent == "codex":
+            # Default values - apply auto-detection
+            if detected_debate:
+                # Both agents available
+                config.debate.primary_agent = detected_primary
+                config.debate.secondary_agent = detected_secondary
+            else:
+                # Only one agent installed - use same-agent debate
+                config.debate.primary_agent = detected_primary
+                config.debate.secondary_agent = detected_primary  # Same agent
+                if not parsed.quiet:
+                    print(f"Note: Only {detected_primary} installed, using {detected_primary.title()} vs {detected_primary.title()} debate")
+    elif not config.debate.enabled:
+        # Auto-configure debate if not already set in config file
+        config.debate.enabled = detected_debate
+        if detected_debate:
+            config.debate.primary_agent = detected_primary
+            config.debate.secondary_agent = detected_secondary
+            if not parsed.quiet:
+                print(f"Auto-detected: Both {detected_primary} and {detected_secondary} installed, enabling debate mode")
+
     # Apply agent selection
     if parsed.agent:
+        # User explicitly specified agent - use it as primary
         config.agent.type = parsed.agent
+        if config.debate.enabled:
+            # Align debate primary with explicit agent choice
+            config.debate.primary_agent = parsed.agent
+            # Set secondary to the other available agent, or same agent if other not available
+            if parsed.agent == "claude":
+                if installed.get("codex"):
+                    config.debate.secondary_agent = "codex"
+                else:
+                    config.debate.secondary_agent = "claude"  # Same-agent debate
+                    if not parsed.quiet:
+                        print(f"Note: Codex not installed, using Claude vs Claude debate")
+            elif parsed.agent == "codex":
+                if installed.get("claude"):
+                    config.debate.secondary_agent = "claude"
+                else:
+                    config.debate.secondary_agent = "codex"  # Same-agent debate
+                    if not parsed.quiet:
+                        print(f"Note: Claude not installed, using Codex vs Codex debate")
+    else:
+        # No explicit agent - respect config file if set, otherwise use auto-detected
+        # Only override if config has default value and auto-detection found something different
+        if config.agent.type == "claude" and detected_primary != "claude":
+            # Config has default, but auto-detection found only codex
+            config.agent.type = detected_primary
+        elif not installed.get(config.agent.type):
+            # Config's agent isn't installed, fall back to detected
+            config.agent.type = detected_primary
+            if not parsed.quiet:
+                print(f"Note: Configured agent not installed, using {detected_primary}")
 
     # Determine plans directory
     plans_dir = Path(config.plans_dir)

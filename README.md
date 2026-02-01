@@ -317,15 +317,26 @@ The debate follows a 3-turn structure:
 
 ### Enabling Debate Mode
 
-Add to your `selfassembler.yaml`:
+**Auto-Detection (Default)**: SelfAssembler automatically detects installed agents. If both `claude` and `codex` CLIs are available, debate mode is enabled by default with Claude as primary and Codex as secondary.
+
+**CLI Flags**:
+```bash
+# Force enable debate mode
+selfassembler "Add feature" --debate
+
+# Force disable debate mode (single agent)
+selfassembler "Add feature" --no-debate
+```
+
+**Configuration** in `selfassembler.yaml`:
 
 ```yaml
 debate:
-  enabled: true
-  primary_agent: claude
-  secondary_agent: codex
-  max_exchange_messages: 3  # Messages in Turn 2 (2-6)
-  parallel_turn_1: true     # Run Turn 1 in parallel
+  enabled: true              # Or use --debate / --no-debate CLI flags
+  primary_agent: claude      # Primary agent (does synthesis)
+  secondary_agent: codex     # Secondary agent (alternative perspective)
+  max_exchange_messages: 3   # Messages in Turn 2 (must be odd: 3 or 5)
+  parallel_turn_1: true      # Run Turn 1 in parallel
   phases:
     research: true
     planning: true

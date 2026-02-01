@@ -13,10 +13,11 @@ from selfassembler.executors.base import ExecutionResult
 class DebateMessage:
     """A single message in the debate exchange."""
 
-    speaker: str  # "claude" or "codex"
+    speaker: str  # Agent name (e.g., "claude" or "codex")
     message_number: int
     content: str
     result: ExecutionResult | None = None
+    role: str | None = None  # "primary" or "secondary" - supports same-agent debates
 
     @property
     def cost_usd(self) -> float:
@@ -28,38 +29,84 @@ class DebateMessage:
         """Get the session ID from this message's execution."""
         return self.result.session_id if self.result else None
 
+    @property
+    def is_primary(self) -> bool:
+        """Check if this message is from the primary agent."""
+        return self.role == "primary"
+
+    @property
+    def is_secondary(self) -> bool:
+        """Check if this message is from the secondary agent."""
+        return self.role == "secondary"
+
 
 @dataclass
 class Turn1Results:
     """Results from Turn 1 parallel generation."""
 
-    claude_result: ExecutionResult
-    codex_result: ExecutionResult
-    claude_output_file: Path
-    codex_output_file: Path
+    primary_result: ExecutionResult
+    secondary_result: ExecutionResult
+    primary_output_file: Path
+    secondary_output_file: Path
+    primary_agent: str = "claude"
+    secondary_agent: str = "codex"
+
+    # Backward compatibility aliases
+    @property
+    def claude_result(self) -> ExecutionResult:
+        """Backward compatible alias for primary_result."""
+        return self.primary_result
+
+    @property
+    def codex_result(self) -> ExecutionResult:
+        """Backward compatible alias for secondary_result."""
+        return self.secondary_result
+
+    @property
+    def claude_output_file(self) -> Path:
+        """Backward compatible alias for primary_output_file."""
+        return self.primary_output_file
+
+    @property
+    def codex_output_file(self) -> Path:
+        """Backward compatible alias for secondary_output_file."""
+        return self.secondary_output_file
 
     @property
     def total_cost(self) -> float:
         """Get combined cost of Turn 1."""
-        return self.claude_result.cost_usd + self.codex_result.cost_usd
+        return self.primary_result.cost_usd + self.secondary_result.cost_usd
 
     def get(self, agent: str) -> ExecutionResult:
         """Get result for a specific agent."""
-        if agent == "claude":
-            return self.claude_result
-        elif agent == "codex":
-            return self.codex_result
+        if agent == self.primary_agent:
+            return self.primary_result
+        elif agent == self.secondary_agent:
+            return self.secondary_result
         else:
             raise ValueError(f"Unknown agent: {agent}")
 
     def get_output_file(self, agent: str) -> Path:
         """Get output file path for a specific agent."""
-        if agent == "claude":
-            return self.claude_output_file
-        elif agent == "codex":
-            return self.codex_output_file
+        if agent == self.primary_agent:
+            return self.primary_output_file
+        elif agent == self.secondary_agent:
+            return self.secondary_output_file
         else:
             raise ValueError(f"Unknown agent: {agent}")
+
+    def get_output_file_by_role(self, role: str) -> Path:
+        """Get output file path by role (primary/secondary).
+
+        This method should be preferred over get_output_file() when working
+        with same-agent debates where primary_agent == secondary_agent.
+        """
+        if role == "primary":
+            return self.primary_output_file
+        elif role == "secondary":
+            return self.secondary_output_file
+        else:
+            raise ValueError(f"Unknown role: {role}. Must be 'primary' or 'secondary'")
 
 
 @dataclass
@@ -68,6 +115,8 @@ class Turn2Results:
 
     messages: list[DebateMessage] = field(default_factory=list)
     debate_log_path: Path | None = None
+    primary_agent: str = "claude"
+    secondary_agent: str = "codex"
 
     @property
     def total_cost(self) -> float:
@@ -79,16 +128,56 @@ class Turn2Results:
         """Get the number of messages exchanged."""
         return len(self.messages)
 
+    def get_agent_messages(self, agent: str) -> list[DebateMessage]:
+        """Get all messages from a specific agent."""
+        return [m for m in self.messages if m.speaker == agent]
+
+    def get_role_messages(self, role: str) -> list[DebateMessage]:
+        """Get all messages from a specific role ("primary" or "secondary")."""
+        return [m for m in self.messages if m.role == role]
+
+    def get_primary_messages(self) -> list[DebateMessage]:
+        """Get all messages from the primary agent.
+
+        Uses the role field to correctly handle same-agent debates.
+        """
+        # Use role field if available (supports same-agent debates)
+        role_msgs = self.get_role_messages("primary")
+        if role_msgs:
+            return role_msgs
+        # Fallback to agent name for backward compatibility
+        return self.get_agent_messages(self.primary_agent)
+
+    def get_secondary_messages(self) -> list[DebateMessage]:
+        """Get all messages from the secondary agent.
+
+        Uses the role field to correctly handle same-agent debates.
+        """
+        # Use role field if available (supports same-agent debates)
+        role_msgs = self.get_role_messages("secondary")
+        if role_msgs:
+            return role_msgs
+        # Fallback to agent name for backward compatibility
+        return self.get_agent_messages(self.secondary_agent)
+
+    # Backward compatibility
     def get_claude_messages(self) -> list[DebateMessage]:
-        """Get all messages from Claude."""
+        """Get all messages from Claude (backward compatible)."""
         return [m for m in self.messages if m.speaker == "claude"]
 
     def get_codex_messages(self) -> list[DebateMessage]:
-        """Get all messages from Codex."""
+        """Get all messages from Codex (backward compatible)."""
         return [m for m in self.messages if m.speaker == "codex"]
 
+    def get_final_primary_session(self) -> str | None:
+        """Get the session ID from primary agent's final message."""
+        primary_msgs = self.get_primary_messages()
+        if primary_msgs:
+            return primary_msgs[-1].session_id
+        return None
+
     def get_final_claude_session(self) -> str | None:
-        """Get the session ID from Claude's final message."""
+        """Get the session ID from Claude's final message (backward compatible)."""
         claude_msgs = self.get_claude_messages()
         if claude_msgs:
             return claude_msgs[-1].session_id
@@ -150,38 +239,51 @@ class DebateResult:
         return cost
 
     @property
-    def claude_cost(self) -> float:
-        """Get cost attributed to Claude."""
+    def primary_cost(self) -> float:
+        """Get cost attributed to primary agent."""
         cost = 0.0
         if self.turn1:
-            cost += self.turn1.claude_result.cost_usd
+            cost += self.turn1.primary_result.cost_usd
         if self.turn2:
-            for msg in self.turn2.get_claude_messages():
+            for msg in self.turn2.get_primary_messages():
                 cost += msg.cost_usd
         if self.synthesis:
             cost += self.synthesis.cost_usd
         return cost
 
     @property
-    def codex_cost(self) -> float:
-        """Get cost attributed to Codex."""
+    def secondary_cost(self) -> float:
+        """Get cost attributed to secondary agent."""
         cost = 0.0
         if self.turn1:
-            cost += self.turn1.codex_result.cost_usd
+            cost += self.turn1.secondary_result.cost_usd
         if self.turn2:
-            for msg in self.turn2.get_codex_messages():
+            for msg in self.turn2.get_secondary_messages():
                 cost += msg.cost_usd
         return cost
+
+    # Backward compatibility aliases
+    @property
+    def claude_cost(self) -> float:
+        """Get cost attributed to Claude (backward compatible)."""
+        return self.primary_cost
+
+    @property
+    def codex_cost(self) -> float:
+        """Get cost attributed to Codex (backward compatible)."""
+        return self.secondary_cost
 
     def get_session_ids(self) -> dict[str, str]:
         """Get all session IDs from the debate."""
         sessions = {}
 
         if self.turn1:
-            if self.turn1.claude_result.session_id:
-                sessions["turn1_claude"] = self.turn1.claude_result.session_id
-            if self.turn1.codex_result.session_id:
-                sessions["turn1_codex"] = self.turn1.codex_result.session_id
+            primary = self.turn1.primary_agent
+            secondary = self.turn1.secondary_agent
+            if self.turn1.primary_result.session_id:
+                sessions[f"turn1_{primary}"] = self.turn1.primary_result.session_id
+            if self.turn1.secondary_result.session_id:
+                sessions[f"turn1_{secondary}"] = self.turn1.secondary_result.session_id
 
         if self.turn2:
             for msg in self.turn2.messages:
@@ -199,13 +301,17 @@ class DebateResult:
         artifacts = {
             "debate_enabled": True,
             "total_cost": self.total_cost,
-            "claude_cost": self.claude_cost,
-            "codex_cost": self.codex_cost,
+            "primary_cost": self.primary_cost,
+            "secondary_cost": self.secondary_cost,
         }
 
         if self.turn1:
-            artifacts["claude_t1_file"] = str(self.turn1.claude_output_file)
-            artifacts["codex_t1_file"] = str(self.turn1.codex_output_file)
+            primary = self.turn1.primary_agent
+            secondary = self.turn1.secondary_agent
+            artifacts["primary_agent"] = primary
+            artifacts["secondary_agent"] = secondary
+            artifacts[f"{primary}_t1_file"] = str(self.turn1.primary_output_file)
+            artifacts[f"{secondary}_t1_file"] = str(self.turn1.secondary_output_file)
 
         if self.turn2 and self.turn2.debate_log_path:
             artifacts["debate_log_file"] = str(self.turn2.debate_log_path)
