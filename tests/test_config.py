@@ -22,7 +22,7 @@ class TestWorkflowConfig:
         assert config.budget_limit_usd == 15.0
         assert config.autonomous_mode is False
         assert config.git.base_branch == "main"
-        assert config.approvals.enabled is True
+        assert config.approvals.enabled is False  # Autonomous by default
 
     def test_load_nonexistent_file(self):
         """Test loading returns defaults when file doesn't exist."""

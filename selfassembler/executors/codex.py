@@ -18,12 +18,17 @@ from selfassembler.executors.base import AgentExecutor, ExecutionResult, StreamE
 
 @functools.lru_cache(maxsize=1)
 def _check_landlock_available() -> bool:
-    """Check if Linux Landlock is available on this system.
+    """Check if Linux Landlock is available and working on this system.
 
-    Landlock requires CONFIG_SECURITY_LANDLOCK=y in the kernel config.
-    We check for the presence of /sys/kernel/security/landlock.
+    Note: Even when /sys/kernel/security/landlock exists, Codex's workspace-write
+    sandbox can fail with Landlock errors on some systems. We always return False
+    to use danger-full-access, relying on external sandboxing for safety.
+
+    TODO: Implement a runtime test that actually tries workspace-write mode.
     """
-    return Path("/sys/kernel/security/landlock").exists()
+    # Always use danger-full-access - Landlock detection is unreliable
+    # External sandboxing should be used for safety
+    return False
 
 
 class CodexExecutor(AgentExecutor):
@@ -79,53 +84,46 @@ class CodexExecutor(AgentExecutor):
 
     def _map_permission_mode(
         self, permission_mode: str | None, dangerous_mode: bool
-    ) -> tuple[str | None, bool, bool, str | None]:
+    ) -> tuple[str | None, bool, bool]:
         """
         Map SelfAssembler permission modes to Codex CLI flags.
 
         codex exec supports:
         - -s, --sandbox: read-only | workspace-write | danger-full-access
-        - -a, --ask-for-approval: untrusted | on-failure | on-request | never
         - --full-auto: Shortcut for workspace-write with model-driven approval
         - --dangerously-bypass-approvals-and-sandbox: Skip all prompts (DANGEROUS)
 
-        Note: --full-auto requires Linux Landlock. When Landlock is not available,
-        we fall back to danger-full-access with on-request approval for headless ops.
+        Note: We always use danger-full-access for write operations because Codex's
+        Landlock-based workspace-write sandbox is unreliable on many systems.
+        External sandboxing should be used for safety in production.
 
         Args:
             permission_mode: SelfAssembler permission mode
             dangerous_mode: Whether dangerous mode is enabled
 
         Returns:
-            Tuple of (sandbox_mode, use_full_auto, use_dangerous_flag, approval_mode)
+            Tuple of (sandbox_mode, use_full_auto, use_dangerous_flag)
             - sandbox_mode: Value for -s flag (or None to omit)
             - use_full_auto: Whether to use --full-auto flag
             - use_dangerous_flag: Whether to use --dangerously-bypass-approvals-and-sandbox
-            - approval_mode: Value for -a flag (or None to omit)
         """
         if dangerous_mode:
             # Use the dangerous bypass flag for full autonomy
-            return None, False, True, None
+            return None, False, True
 
         if permission_mode is None:
             sandbox = self.PERMISSION_MODE_MAP["default"]
-            return sandbox, False, False, None
+            return sandbox, False, False
 
-        # For acceptEdits, prefer --full-auto (workspace-write with auto-approval)
-        # but fall back to danger-full-access if Landlock is not available
+        # For acceptEdits, use danger-full-access since Landlock is unreliable
+        # External sandboxing should be used for safety
         if permission_mode == "acceptEdits":
-            if _check_landlock_available():
-                # Use --full-auto which implies workspace-write sandbox
-                return None, True, False, None
-            else:
-                # Landlock not available - use danger-full-access with on-request
-                # approval to avoid interactive prompts in headless mode
-                return "danger-full-access", False, False, "on-request"
+            return "danger-full-access", False, False
 
         sandbox = self.PERMISSION_MODE_MAP.get(
             permission_mode, self.PERMISSION_MODE_MAP["default"]
         )
-        return sandbox, False, False, None
+        return sandbox, False, False
 
     def execute(
         self,
@@ -255,8 +253,8 @@ class CodexExecutor(AgentExecutor):
             cmd = [self.CLI_COMMAND, "exec", prompt]
 
         # Map permission mode to Codex flags
-        sandbox_mode, use_full_auto, use_dangerous, approval_mode = (
-            self._map_permission_mode(permission_mode, dangerous_mode)
+        sandbox_mode, use_full_auto, use_dangerous = self._map_permission_mode(
+            permission_mode, dangerous_mode
         )
 
         if use_dangerous:
@@ -265,12 +263,9 @@ class CodexExecutor(AgentExecutor):
         elif use_full_auto:
             # Use --full-auto for workspace-write with automatic approval
             cmd.append("--full-auto")
-        else:
-            # Apply sandbox and approval modes
-            if sandbox_mode:
-                cmd.extend(["-s", sandbox_mode])
-            if approval_mode:
-                cmd.extend(["-a", approval_mode])
+        elif sandbox_mode:
+            # Apply sandbox mode
+            cmd.extend(["-s", sandbox_mode])
 
         # Model selection
         if self.model:

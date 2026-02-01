@@ -248,8 +248,9 @@ class TestPhasePermissionModeHelper:
         executor = MockClaudeExecutor()
 
         # These phases only have Bash/Read but set requires_write=True
-        # for git operations that need write access
-        for phase_class in [CommitPrepPhase, PRCreationPhase]:
+        # for operations that need write access
+        from selfassembler.phases import PRSelfReviewPhase
+        for phase_class in [CommitPrepPhase, PRCreationPhase, PRSelfReviewPhase]:
             phase = phase_class(context, executor, config)
             assert phase.requires_write is True
             assert phase._get_permission_mode() == "acceptEdits", (
@@ -267,6 +268,7 @@ class TestPhasePermissionModeHelper:
             CommitPrepPhase,
             ConflictCheckPhase,
             PRCreationPhase,
+            PRSelfReviewPhase,
         )
 
         executor = MockClaudeExecutor()
@@ -284,18 +286,14 @@ class TestPhasePermissionModeHelper:
             ConflictCheckPhase,  # has Edit
             CommitPrepPhase,  # requires_write for git commit
             PRCreationPhase,  # requires_write for git push/gh pr
+            PRSelfReviewPhase,  # requires_write for gh pr review
         ]
 
         for phase_class in write_phases:
             phase = phase_class(context, executor, config)
-            # If claude_mode is set, it should use that
-            if phase.claude_mode is not None:
-                assert phase._get_permission_mode() == phase.claude_mode
-            else:
-                # Otherwise should return acceptEdits for write phases
-                assert phase._get_permission_mode() == "acceptEdits", (
-                    f"{phase_class.__name__} should return 'acceptEdits'"
-                )
+            assert phase._get_permission_mode() == "acceptEdits", (
+                f"{phase_class.__name__} should return 'acceptEdits'"
+            )
 
 
 class TestDangerousModeConfig:

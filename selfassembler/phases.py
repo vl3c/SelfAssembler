@@ -1392,6 +1392,7 @@ class PRSelfReviewPhase(Phase):
     claude_mode = "plan"
     fresh_context = True  # Unbiased review
     allowed_tools = ["Bash", "Read"]
+    requires_write = True  # gh pr review may write config/auth state
     max_turns = 20
     timeout_seconds = 600
 

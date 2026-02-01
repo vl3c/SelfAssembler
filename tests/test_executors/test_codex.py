@@ -13,19 +13,13 @@ from selfassembler.executors.codex import CodexExecutor, MockCodexExecutor, _che
 class TestLandlockDetection:
     """Tests for Landlock availability detection."""
 
-    @patch("selfassembler.executors.codex.Path")
-    def test_landlock_available(self, mock_path):
-        """Test detection when Landlock is available."""
-        mock_path.return_value.exists.return_value = True
-        # Clear the lru_cache
-        _check_landlock_available.cache_clear()
-        assert _check_landlock_available() is True
-        mock_path.assert_called_with("/sys/kernel/security/landlock")
+    def test_landlock_always_returns_false(self):
+        """Test that Landlock detection always returns False.
 
-    @patch("selfassembler.executors.codex.Path")
-    def test_landlock_not_available(self, mock_path):
-        """Test detection when Landlock is not available."""
-        mock_path.return_value.exists.return_value = False
+        Landlock detection is disabled because Codex's workspace-write
+        sandbox is unreliable on many systems. External sandboxing
+        should be used for safety.
+        """
         _check_landlock_available.cache_clear()
         assert _check_landlock_available() is False
 
@@ -91,8 +85,8 @@ class TestCodexExecutorInit:
 class TestCodexExecutorPermissionModeMapping:
     """Tests for permission mode mapping.
 
-    Returns tuple of (sandbox_mode, use_full_auto, use_dangerous_flag, approval_mode).
-    codex exec supports: -s (sandbox), -a (approval), --full-auto, and --dangerously-bypass-approvals-and-sandbox
+    Returns tuple of (sandbox_mode, use_full_auto, use_dangerous_flag).
+    codex exec supports: -s (sandbox), --full-auto, and --dangerously-bypass-approvals-and-sandbox
     """
 
     @pytest.fixture
@@ -102,70 +96,52 @@ class TestCodexExecutorPermissionModeMapping:
 
     def test_plan_maps_to_read_only(self, executor: CodexExecutor):
         """Test 'plan' mode maps to read-only sandbox."""
-        sandbox, full_auto, dangerous, approval = executor._map_permission_mode("plan", False)
+        sandbox, full_auto, dangerous = executor._map_permission_mode("plan", False)
         assert sandbox == "read-only"
         assert full_auto is False
         assert dangerous is False
-        assert approval is None
 
-    @patch("selfassembler.executors.codex._check_landlock_available")
-    def test_accept_edits_uses_full_auto_with_landlock(self, mock_landlock, executor: CodexExecutor):
-        """Test 'acceptEdits' mode uses --full-auto when Landlock is available."""
-        mock_landlock.return_value = True
-        sandbox, full_auto, dangerous, approval = executor._map_permission_mode("acceptEdits", False)
-        assert sandbox is None  # full-auto implies workspace-write
-        assert full_auto is True
-        assert dangerous is False
-        assert approval is None  # full-auto handles approval
-
-    @patch("selfassembler.executors.codex._check_landlock_available")
-    def test_accept_edits_uses_danger_full_access_without_landlock(self, mock_landlock, executor: CodexExecutor):
-        """Test 'acceptEdits' mode uses danger-full-access when Landlock unavailable."""
-        mock_landlock.return_value = False
-        sandbox, full_auto, dangerous, approval = executor._map_permission_mode("acceptEdits", False)
+    def test_accept_edits_uses_danger_full_access(self, executor: CodexExecutor):
+        """Test 'acceptEdits' mode uses danger-full-access (Landlock unreliable)."""
+        sandbox, full_auto, dangerous = executor._map_permission_mode("acceptEdits", False)
         assert sandbox == "danger-full-access"
         assert full_auto is False
         assert dangerous is False
-        assert approval == "on-request"  # avoid headless hangs
 
     def test_dangerous_mode_uses_bypass_flag(self, executor: CodexExecutor):
         """Test dangerous mode returns use_dangerous_flag=True."""
-        sandbox, full_auto, dangerous, approval = executor._map_permission_mode("plan", True)
+        sandbox, full_auto, dangerous = executor._map_permission_mode("plan", True)
         assert sandbox is None
         assert full_auto is False
         assert dangerous is True
-        assert approval is None
 
     def test_dangerous_mode_overrides_permission_mode(self, executor: CodexExecutor):
         """Test dangerous mode overrides any permission mode."""
-        sandbox, full_auto, dangerous, approval = executor._map_permission_mode("acceptEdits", True)
+        sandbox, full_auto, dangerous = executor._map_permission_mode("acceptEdits", True)
         assert dangerous is True
 
-        sandbox, full_auto, dangerous, approval = executor._map_permission_mode(None, True)
+        sandbox, full_auto, dangerous = executor._map_permission_mode(None, True)
         assert dangerous is True
 
     def test_none_permission_uses_default(self, executor: CodexExecutor):
         """Test None permission mode uses default (read-only)."""
-        sandbox, full_auto, dangerous, approval = executor._map_permission_mode(None, False)
+        sandbox, full_auto, dangerous = executor._map_permission_mode(None, False)
         assert sandbox == "read-only"
         assert full_auto is False
         assert dangerous is False
-        assert approval is None
 
     def test_unknown_permission_uses_default(self, executor: CodexExecutor):
         """Test unknown permission mode uses default."""
-        sandbox, full_auto, dangerous, approval = executor._map_permission_mode("unknown_mode", False)
+        sandbox, full_auto, dangerous = executor._map_permission_mode("unknown_mode", False)
         assert sandbox == "read-only"
         assert full_auto is False
         assert dangerous is False
-        assert approval is None
 
 
 class TestCodexExecutorBuildCommand:
     """Tests for _build_command method.
 
     Codex CLI uses `codex exec` for headless operation with:
-    - -a, --ask-for-approval: untrusted|on-failure|on-request|never
     - -s, --sandbox: read-only|workspace-write|danger-full-access
     - -m, --model: Model to use
     - -C, --cd: Working directory
@@ -201,23 +177,8 @@ class TestCodexExecutorBuildCommand:
         idx = cmd.index("-s")
         assert cmd[idx + 1] == "read-only"
 
-    @patch("selfassembler.executors.codex._check_landlock_available")
-    def test_full_auto_for_accept_edits_with_landlock(self, mock_landlock, executor: CodexExecutor):
-        """Test --full-auto is used for acceptEdits when Landlock is available."""
-        mock_landlock.return_value = True
-        cmd = executor._build_command(
-            prompt="test",
-            permission_mode="acceptEdits",
-            streaming=False,
-        )
-
-        assert "--full-auto" in cmd
-        assert "-s" not in cmd  # full-auto replaces sandbox flag
-
-    @patch("selfassembler.executors.codex._check_landlock_available")
-    def test_danger_full_access_for_accept_edits_without_landlock(self, mock_landlock, executor: CodexExecutor):
-        """Test danger-full-access with on-request approval without Landlock."""
-        mock_landlock.return_value = False
+    def test_danger_full_access_for_accept_edits(self, executor: CodexExecutor):
+        """Test danger-full-access is used for acceptEdits (Landlock unreliable)."""
         cmd = executor._build_command(
             prompt="test",
             permission_mode="acceptEdits",
@@ -227,10 +188,6 @@ class TestCodexExecutorBuildCommand:
         assert "-s" in cmd
         idx = cmd.index("-s")
         assert cmd[idx + 1] == "danger-full-access"
-        # Also needs on-request approval for headless operation
-        assert "-a" in cmd
-        idx = cmd.index("-a")
-        assert cmd[idx + 1] == "on-request"
 
     def test_dangerous_mode_uses_bypass_flag(self, executor: CodexExecutor):
         """Test dangerous mode uses --dangerously-bypass-approvals-and-sandbox."""
@@ -241,8 +198,6 @@ class TestCodexExecutorBuildCommand:
         )
 
         assert "--dangerously-bypass-approvals-and-sandbox" in cmd
-        # Should not have -a or -s flags when using dangerous bypass
-        assert "-a" not in cmd
         assert "-s" not in cmd
 
     def test_model_option(self):
