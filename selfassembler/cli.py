@@ -564,8 +564,15 @@ def main(args: list[str] | None = None) -> int:
         if config.debate.primary_agent == "claude" and config.debate.secondary_agent == "codex":
             # Default values - apply auto-detection
             if detected_debate:
+                # Both agents available
                 config.debate.primary_agent = detected_primary
                 config.debate.secondary_agent = detected_secondary
+            else:
+                # Only one agent installed - use same-agent debate
+                config.debate.primary_agent = detected_primary
+                config.debate.secondary_agent = detected_primary  # Same agent
+                if not parsed.quiet:
+                    print(f"Note: Only {detected_primary} installed, using {detected_primary.title()} vs {detected_primary.title()} debate")
     elif not config.debate.enabled:
         # Auto-configure debate if not already set in config file
         config.debate.enabled = detected_debate

@@ -247,9 +247,9 @@ NOTE: This is the final debate message. Synthesis will follow.
         final_output_file: Path,
     ) -> str:
         """Generate the synthesis prompt for Turn 3."""
-        # Get output files using dynamic agent names
-        primary_output = t1_results.get_output_file(self.primary_agent)
-        secondary_output = t1_results.get_output_file(self.secondary_agent)
+        # Get output files using role-based lookup to support same-agent debates
+        primary_output = t1_results.get_output_file_by_role("primary")
+        secondary_output = t1_results.get_output_file_by_role("secondary")
 
         return f"""# Synthesis: {self.phase_name} (Turn 3 of 3 - FINAL)
 
