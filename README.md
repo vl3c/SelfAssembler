@@ -142,7 +142,7 @@ SelfAssembler executes 16 phases in sequence:
 | 1 | **Preflight** | Validate environment (CLI tools, git state) | No |
 | 2 | **Setup** | Create git worktree and isolated workspace | No |
 | 3 | **Research** | Gather project context and conventions | No |
-| 4 | **Planning** | Create detailed implementation plan | **Yes** (default) |
+| 4 | **Planning** | Create detailed implementation plan | No (optional) |
 | 5 | **Implementation** | Execute the plan, write code | No |
 | 6 | **Test Writing** | Write comprehensive tests | No |
 | 7 | **Test Execution** | Run tests with fix-and-retry loop | No |
