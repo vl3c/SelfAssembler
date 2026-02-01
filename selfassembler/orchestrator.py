@@ -165,6 +165,11 @@ class Orchestrator:
         self.checkpoint_manager = checkpoint_manager or CheckpointManager()
         self.approval_store = ApprovalStore(context.plans_dir)
 
+        # Create secondary executor for debate if enabled
+        self.secondary_executor: AgentExecutor | None = None
+        if config.debate.enabled:
+            self.secondary_executor = self._create_secondary_executor(context.repo_path)
+
         # Enforce container for autonomous mode
         if config.autonomous_mode:
             self._enforce_container_runtime()
@@ -190,6 +195,30 @@ class Orchestrator:
             debug=self.config.streaming.debug,
         )
 
+    def _create_secondary_executor(self, working_dir: Path) -> AgentExecutor:
+        """Create a secondary agent executor for debate."""
+        debate_config = self.config.debate
+        secondary_agent_type = debate_config.secondary_agent
+
+        self.logger.log(
+            "secondary_executor_created",
+            data={
+                "working_dir": str(working_dir),
+                "agent_type": secondary_agent_type,
+            },
+        )
+
+        return create_executor(
+            agent_type=secondary_agent_type,
+            working_dir=working_dir,
+            default_timeout=debate_config.turn_timeout_seconds,
+            model=None,  # Use default model for secondary agent
+            stream=self.config.streaming.enabled,
+            stream_callback=self._stream_callback,
+            verbose=self.config.streaming.verbose,
+            debug=self.config.streaming.debug,
+        )
+
     def _reinitialize_executor_for_worktree(self) -> None:
         """Reinitialize executor to use worktree as working directory.
 
@@ -205,6 +234,42 @@ class Orchestrator:
                 },
             )
             self.executor = self._create_executor(self.context.worktree_path)
+
+            # Also reinitialize secondary executor for debate
+            if self.secondary_executor is not None:
+                self.logger.log(
+                    "secondary_executor_reinitializing_for_worktree",
+                    data={
+                        "old_working_dir": str(self.secondary_executor.working_dir),
+                        "new_working_dir": str(self.context.worktree_path),
+                    },
+                )
+                self.secondary_executor = self._create_secondary_executor(
+                    self.context.worktree_path
+                )
+
+    def _create_phase(self, phase_class: type[Phase]) -> Phase:
+        """Create a phase instance, passing secondary executor if supported.
+
+        For phases that inherit from DebatePhase, the secondary executor
+        is passed to enable multi-agent debate when configured.
+        """
+        from selfassembler.phases import DebatePhase
+
+        # Check if phase supports debate (has secondary_executor parameter)
+        if issubclass(phase_class, DebatePhase):
+            return phase_class(
+                context=self.context,
+                executor=self.executor,
+                config=self.config,
+                secondary_executor=self.secondary_executor,
+            )
+        else:
+            return phase_class(
+                context=self.context,
+                executor=self.executor,
+                config=self.config,
+            )
 
     def _write_rules_to_worktree(self) -> None:
         """Write CLAUDE.md with project rules to the worktree.
@@ -337,7 +402,7 @@ class Orchestrator:
                     continue
 
                 # Create and run phase
-                phase = phase_class(self.context, self.executor, self.config)
+                phase = self._create_phase(phase_class)
                 self._run_phase(phase)
 
                 # After setup phase, reinitialize executor for worktree and write rules

@@ -15,7 +15,7 @@ from selfassembler.errors import PreflightFailedError
 from selfassembler.git import GitManager, copy_config_files
 
 if TYPE_CHECKING:
-    from selfassembler.config import WorkflowConfig
+    from selfassembler.config import DebateConfig, WorkflowConfig
     from selfassembler.context import WorkflowContext
     from selfassembler.executors import AgentExecutor
 
@@ -105,6 +105,111 @@ class Phase(ABC):
             return self.claude_mode
 
         return None
+
+
+class DebatePhase(Phase):
+    """
+    Base class for phases that support multi-agent debate.
+
+    Extends Phase to optionally use a secondary agent for debate.
+    When debate is enabled, the phase runs a 3-turn debate process
+    instead of single-agent execution.
+    """
+
+    debate_supported: bool = True
+    debate_phase_name: str = "base"  # Used for prompt generator lookup
+
+    def __init__(
+        self,
+        context: WorkflowContext,
+        executor: AgentExecutor,
+        config: WorkflowConfig,
+        secondary_executor: AgentExecutor | None = None,
+    ):
+        super().__init__(context, executor, config)
+        self.secondary_executor = secondary_executor
+
+    def run(self) -> PhaseResult:
+        """Execute the phase, optionally with debate."""
+        if self._should_debate():
+            return self._run_with_debate()
+        return self._run_single_agent()
+
+    def _should_debate(self) -> bool:
+        """Check if debate should be used for this phase."""
+        debate_config = self.config.debate
+        if not debate_config.enabled:
+            return False
+
+        if self.secondary_executor is None:
+            return False
+
+        # Check if this specific phase has debate enabled
+        phase_key = self.debate_phase_name.replace("-", "_")
+        return getattr(debate_config.phases, phase_key, False)
+
+    def _run_with_debate(self) -> PhaseResult:
+        """Run the phase with multi-agent debate."""
+        from selfassembler.debate.files import DebateFileManager
+        from selfassembler.debate.orchestrator import DebateOrchestrator
+        from selfassembler.debate.prompts import get_prompt_generator
+
+        debate_config = self.config.debate
+
+        # Create file manager
+        file_manager = DebateFileManager(
+            plans_dir=self.context.plans_dir,
+            task_name=self.context.task_name,
+            debate_subdir=debate_config.debate_subdir,
+        )
+
+        # Get prompt generator for this phase
+        prompt_generator = get_prompt_generator(
+            phase_name=self.debate_phase_name,
+            task_description=self.context.task_description,
+            task_name=self.context.task_name,
+            plans_dir=self.context.plans_dir,
+            **self._get_prompt_generator_kwargs(),
+        )
+
+        # Create debate orchestrator
+        orchestrator = DebateOrchestrator(
+            primary_executor=self.executor,
+            secondary_executor=self.secondary_executor,
+            config=debate_config,
+            context=self.context,
+            file_manager=file_manager,
+        )
+
+        # Run debate
+        debate_result = orchestrator.run_debate(
+            phase_name=self.debate_phase_name,
+            prompt_generator=prompt_generator,
+            permission_mode=self._get_permission_mode(),
+            allowed_tools=self.allowed_tools,
+            dangerous_mode=self._dangerous_mode(),
+        )
+
+        # Add costs to context
+        self.context.add_cost(self.name, debate_result.total_cost)
+
+        # Convert to PhaseResult
+        return PhaseResult(
+            success=debate_result.success,
+            cost_usd=debate_result.total_cost,
+            error=debate_result.error,
+            artifacts=debate_result.to_phase_result_artifacts(),
+            session_id=debate_result.synthesis.session_id if debate_result.synthesis else None,
+        )
+
+    @abstractmethod
+    def _run_single_agent(self) -> PhaseResult:
+        """Run the phase with single agent (original implementation)."""
+        pass
+
+    def _get_prompt_generator_kwargs(self) -> dict[str, Any]:
+        """Get additional kwargs for the prompt generator."""
+        return {}
 
 
 class PreflightPhase(Phase):
@@ -300,16 +405,18 @@ class SetupPhase(Phase):
             return PhaseResult(success=False, error=str(e))
 
 
-class ResearchPhase(Phase):
+class ResearchPhase(DebatePhase):
     """Gather context before planning."""
 
     name = "research"
+    debate_phase_name = "research"
     claude_mode = "plan"  # Read-only
     allowed_tools = ["Read", "Grep", "Glob", "LS", "WebSearch"]
     max_turns = 25
     timeout_seconds = 300
+    fresh_context = True  # Unbiased research
 
-    def run(self) -> PhaseResult:
+    def _run_single_agent(self) -> PhaseResult:
         research_file = self.context.plans_dir / f"research-{self.context.task_name}.md"
         self.context.plans_dir.mkdir(parents=True, exist_ok=True)
 
@@ -357,10 +464,11 @@ Format the research as markdown with clear sections.
         )
 
 
-class PlanningPhase(Phase):
+class PlanningPhase(DebatePhase):
     """Create detailed implementation plan."""
 
     name = "planning"
+    debate_phase_name = "planning"
     claude_mode = "plan"
     fresh_context = True  # Fresh eyes to avoid research biases in plan structure
     allowed_tools = ["Read", "Grep", "Glob", "Write"]
@@ -368,7 +476,7 @@ class PlanningPhase(Phase):
     timeout_seconds = 600
     approval_gate = True  # Configurable via config
 
-    def run(self) -> PhaseResult:
+    def _run_single_agent(self) -> PhaseResult:
         plan_file = self.context.plans_dir / f"plan-{self.context.task_name}.md"
         research_file = self.context.plans_dir / f"research-{self.context.task_name}.md"
 
@@ -430,10 +538,11 @@ Plan format:
         )
 
 
-class PlanReviewPhase(Phase):
+class PlanReviewPhase(DebatePhase):
     """Review and improve the implementation plan with SWOT analysis."""
 
     name = "plan_review"
+    debate_phase_name = "plan_review"
     claude_mode = "plan"
     fresh_context = True  # Critical: unbiased review
     allowed_tools = ["Read", "Grep", "Glob", "Write"]
@@ -441,7 +550,7 @@ class PlanReviewPhase(Phase):
     timeout_seconds = 600
     approval_gate = False  # Configurable via --review-plan-approval
 
-    def run(self) -> PhaseResult:
+    def _run_single_agent(self) -> PhaseResult:
         plan_file = self.context.plans_dir / f"plan-{self.context.task_name}.md"
         review_file = self.context.plans_dir / f"plan-review-{self.context.task_name}.md"
 
@@ -749,17 +858,22 @@ Do NOT run tests yet (I will run them after your fixes).
         return {"changes_made": not result.is_error}
 
 
-class CodeReviewPhase(Phase):
+class CodeReviewPhase(DebatePhase):
     """Review implementation with fresh context."""
 
     name = "code_review"
+    debate_phase_name = "code_review"
     claude_mode = "plan"  # Read-only
     fresh_context = True  # Critical: unbiased review
     allowed_tools = ["Read", "Grep", "Glob", "Bash"]
     max_turns = 30
     timeout_seconds = 600
 
-    def run(self) -> PhaseResult:
+    def _get_prompt_generator_kwargs(self) -> dict[str, Any]:
+        """Provide base_branch for code review prompts."""
+        return {"base_branch": self.config.git.base_branch}
+
+    def _run_single_agent(self) -> PhaseResult:
         review_file = self.context.plans_dir / f"review-{self.context.task_name}.md"
 
         prompt = f"""

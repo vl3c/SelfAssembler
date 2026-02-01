@@ -107,6 +107,82 @@ class WorkflowContext:
         """Get a stored session ID."""
         return self.session_ids.get(phase)
 
+    # -------------------------------------------------------------------------
+    # Debate session tracking
+    # -------------------------------------------------------------------------
+
+    def set_debate_session_id(
+        self,
+        phase: str,
+        agent: str,
+        turn: int,
+        session_id: str,
+        message_num: int | None = None,
+    ) -> None:
+        """
+        Store session ID for a debate turn.
+
+        Args:
+            phase: The phase name (e.g., "research")
+            agent: The agent name ("claude" or "codex")
+            turn: The turn number (1, 2, or 3)
+            session_id: The session ID to store
+            message_num: Optional message number for Turn 2 messages
+        """
+        if message_num is not None:
+            key = f"{phase}_{agent}_t{turn}_msg{message_num}"
+        else:
+            key = f"{phase}_{agent}_t{turn}"
+        self.session_ids[key] = session_id
+
+    def get_debate_session_id(
+        self,
+        phase: str,
+        agent: str,
+        turn: int,
+        message_num: int | None = None,
+    ) -> str | None:
+        """
+        Get stored debate session ID.
+
+        Args:
+            phase: The phase name
+            agent: The agent name
+            turn: The turn number
+            message_num: Optional message number for Turn 2 messages
+
+        Returns:
+            The session ID if found, None otherwise
+        """
+        if message_num is not None:
+            key = f"{phase}_{agent}_t{turn}_msg{message_num}"
+        else:
+            key = f"{phase}_{agent}_t{turn}"
+        return self.session_ids.get(key)
+
+    def get_synthesis_resume_session(self, phase: str) -> str | None:
+        """
+        Get session to resume for synthesis (Turn 3).
+
+        This returns the session from Claude's final Turn 2 message,
+        allowing synthesis to carry the full debate context.
+
+        Args:
+            phase: The phase name
+
+        Returns:
+            The session ID to resume, or None
+        """
+        # Try to find Claude's last Turn 2 message session
+        # Check messages 3, 2, 1 (typical max is 3)
+        for msg_num in [3, 2, 1]:
+            session = self.get_debate_session_id(phase, "claude", 2, msg_num)
+            if session:
+                return session
+
+        # Fall back to Turn 1 session
+        return self.get_debate_session_id(phase, "claude", 1)
+
     def get_working_dir(self) -> Path:
         """Get the current working directory (worktree or repo)."""
         return self.worktree_path or self.repo_path
