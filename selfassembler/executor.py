@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -235,6 +236,14 @@ class ClaudeExecutor:
         # Collect all events and the final result
         all_events: list[StreamEvent] = []
         final_result_data: dict[str, Any] | None = None
+        stderr_lines: list[str] = []
+        stderr_thread: threading.Thread | None = None
+
+        def _drain_stderr(stream: Any) -> None:
+            if not stream:
+                return
+            for line in stream:
+                stderr_lines.append(line)
 
         try:
             process = subprocess.Popen(
@@ -245,6 +254,14 @@ class ClaudeExecutor:
                 text=True,
                 bufsize=1,  # Line buffered
             )
+
+            if process.stderr:
+                stderr_thread = threading.Thread(
+                    target=_drain_stderr,
+                    args=(process.stderr,),
+                    daemon=True,
+                )
+                stderr_thread.start()
 
             # Read stdout line by line
             if process.stdout:
@@ -274,6 +291,8 @@ class ClaudeExecutor:
                 process.wait()
 
             elapsed_ms = int((time.time() - start_time) * 1000)
+            if stderr_thread:
+                stderr_thread.join(timeout=1)
 
             # Parse result from final event or fallback
             if final_result_data:
@@ -303,6 +322,8 @@ class ClaudeExecutor:
             process.kill()
             process.wait()
             elapsed_ms = int((time.time() - start_time) * 1000)
+            if stderr_thread:
+                stderr_thread.join(timeout=1)
             return ExecutionResult(
                 session_id="",
                 output=f"Timeout after {timeout}s",
