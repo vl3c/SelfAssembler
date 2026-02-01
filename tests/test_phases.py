@@ -214,6 +214,15 @@ class TestPhasePermissionModeHelper:
         # ResearchPhase has claude_mode = "plan"
         assert phase._get_permission_mode() == "plan"
 
+    def test_research_phase_returns_accept_edits_for_codex(self, context: WorkflowContext):
+        """Test that research phase returns acceptEdits for codex to allow writing research files."""
+        executor = MockCodexExecutor()
+        config = WorkflowConfig()
+        config.agent.type = "codex"
+        phase = ResearchPhase(context, executor, config)
+
+        assert phase._get_permission_mode() == "acceptEdits"
+
     def test_write_phase_returns_accept_edits(self, context: WorkflowContext, config: WorkflowConfig):
         """Test that write phases without claude_mode return 'acceptEdits'."""
         executor = MockClaudeExecutor()

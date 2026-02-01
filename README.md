@@ -184,6 +184,11 @@ agent:
   type: "claude"  # or "codex" for OpenAI Codex CLI
   model: null     # optional: override default model
 
+# Codex sandbox note:
+# SelfAssembler automatically switches Codex to a writable sandbox for phases
+# that need to create/update files (plans, reviews, implementation, etc.).
+# Read-only phases remain read-only.
+
 # Git settings
 git:
   base_branch: "main"
@@ -240,7 +245,8 @@ See [`docs/configuration.md`](docs/configuration.md) for all available options.
 
 ### Safe Mode (Default)
 
-Uses Claude's permission system with tool whitelists. Pauses at approval gates for human review.
+Uses the agent CLI's permission/sandbox system with tool whitelists where supported.
+Pauses at approval gates for human review.
 
 ```bash
 selfassembler "Add feature" --name feature

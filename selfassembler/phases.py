@@ -302,7 +302,7 @@ class ResearchPhase(Phase):
 
     name = "research"
     claude_mode = "plan"  # Read-only
-    allowed_tools = ["Read", "Grep", "Glob", "LS", "WebSearch"]
+    allowed_tools = ["Read", "Grep", "Glob", "Write", "LS", "WebSearch"]
     max_turns = 25
     timeout_seconds = 300
 
