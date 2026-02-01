@@ -511,7 +511,8 @@ def main(args: list[str] | None = None) -> int:
     if parsed.autonomous:
         config.autonomous_mode = True
         config.approvals.enabled = False
-        config.claude.dangerous_mode = True
+        config.agent.dangerous_mode = True
+        config.claude.dangerous_mode = True  # Legacy compatibility
     elif parsed.no_approvals:
         config.approvals.enabled = False
 

@@ -188,6 +188,170 @@ class TestCodeReviewPhase:
         assert CodeReviewPhase.claude_mode == "plan"
 
 
+class TestPhasePermissionModeHelper:
+    """Tests for _get_permission_mode helper method."""
+
+    @pytest.fixture
+    def context(self) -> WorkflowContext:
+        """Create a workflow context for testing."""
+        return WorkflowContext(
+            task_description="Test",
+            task_name="test",
+            repo_path=Path.cwd(),
+            plans_dir=Path.cwd() / "plans",
+        )
+
+    @pytest.fixture
+    def config(self) -> WorkflowConfig:
+        """Create a config for testing."""
+        return WorkflowConfig()
+
+    def test_read_only_phase_returns_claude_mode(self, context: WorkflowContext, config: WorkflowConfig):
+        """Test that phases with claude_mode='plan' return 'plan'."""
+        executor = MockClaudeExecutor()
+        phase = ResearchPhase(context, executor, config)
+
+        # ResearchPhase has claude_mode = "plan"
+        assert phase._get_permission_mode() == "plan"
+
+    def test_write_phase_returns_accept_edits(self, context: WorkflowContext, config: WorkflowConfig):
+        """Test that write phases without claude_mode return 'acceptEdits'."""
+        executor = MockClaudeExecutor()
+        phase = ImplementationPhase(context, executor, config)
+
+        # ImplementationPhase has Write, Edit, Bash in allowed_tools
+        # but no claude_mode set
+        assert phase._get_permission_mode() == "acceptEdits"
+
+    def test_planning_phase_returns_plan_despite_write_tool(self, context: WorkflowContext, config: WorkflowConfig):
+        """Test that planning phase returns 'plan' even though it has Write tool."""
+        executor = MockClaudeExecutor()
+        phase = PlanningPhase(context, executor, config)
+
+        # PlanningPhase has claude_mode = "plan" AND Write in allowed_tools
+        # claude_mode should take precedence
+        assert phase._get_permission_mode() == "plan"
+
+    def test_code_review_returns_plan(self, context: WorkflowContext, config: WorkflowConfig):
+        """Test that code review phase returns 'plan' (read-only)."""
+        executor = MockClaudeExecutor()
+        phase = CodeReviewPhase(context, executor, config)
+
+        # CodeReviewPhase has claude_mode = "plan"
+        assert phase._get_permission_mode() == "plan"
+
+    def test_all_write_phases_return_accept_edits(self, context: WorkflowContext, config: WorkflowConfig):
+        """Test that all phases with write tools but no claude_mode return acceptEdits."""
+        from selfassembler.phases import (
+            TestWritingPhase,
+            TestExecutionPhase,
+            FixReviewIssuesPhase,
+            LintCheckPhase,
+            DocumentationPhase,
+            CommitPrepPhase,
+            ConflictCheckPhase,
+            PRCreationPhase,
+        )
+
+        executor = MockClaudeExecutor()
+
+        # These phases have Write/Edit/Bash in allowed_tools but no claude_mode
+        write_phases = [
+            ImplementationPhase,
+            TestWritingPhase,
+            TestExecutionPhase,
+            FixReviewIssuesPhase,
+            LintCheckPhase,
+            DocumentationPhase,
+            CommitPrepPhase,
+            ConflictCheckPhase,
+            PRCreationPhase,
+        ]
+
+        for phase_class in write_phases:
+            phase = phase_class(context, executor, config)
+            # If claude_mode is set, it should use that
+            if phase.claude_mode is not None:
+                assert phase._get_permission_mode() == phase.claude_mode
+            else:
+                # Otherwise should return acceptEdits for write phases
+                assert phase._get_permission_mode() == "acceptEdits", (
+                    f"{phase_class.__name__} should return 'acceptEdits'"
+                )
+
+
+class TestDangerousModeConfig:
+    """Tests for _dangerous_mode using agent config."""
+
+    @pytest.fixture
+    def context(self) -> WorkflowContext:
+        """Create a workflow context for testing."""
+        return WorkflowContext(
+            task_description="Test",
+            task_name="test",
+            repo_path=Path.cwd(),
+            plans_dir=Path.cwd() / "plans",
+        )
+
+    def test_dangerous_mode_uses_agent_config(self, context: WorkflowContext):
+        """Test that _dangerous_mode reads from agent config."""
+        executor = MockClaudeExecutor()
+        config = WorkflowConfig()
+
+        # Enable autonomous mode and agent.dangerous_mode
+        config.autonomous_mode = True
+        config.agent.dangerous_mode = True
+
+        phase = ImplementationPhase(context, executor, config)
+
+        assert phase._dangerous_mode() is True
+
+    def test_dangerous_mode_false_when_not_autonomous(self, context: WorkflowContext):
+        """Test that _dangerous_mode is False when not in autonomous mode."""
+        executor = MockClaudeExecutor()
+        config = WorkflowConfig()
+
+        config.autonomous_mode = False
+        config.agent.dangerous_mode = True
+
+        phase = ImplementationPhase(context, executor, config)
+
+        assert phase._dangerous_mode() is False
+
+    def test_dangerous_mode_false_when_agent_dangerous_disabled(self, context: WorkflowContext):
+        """Test that _dangerous_mode is False when agent.dangerous_mode is False."""
+        executor = MockClaudeExecutor()
+        config = WorkflowConfig()
+
+        config.autonomous_mode = True
+        config.agent.dangerous_mode = False
+
+        phase = ImplementationPhase(context, executor, config)
+
+        assert phase._dangerous_mode() is False
+
+    def test_dangerous_mode_inherits_from_legacy_claude_config(self, context: WorkflowContext):
+        """Test that _dangerous_mode can inherit from legacy claude config."""
+        executor = MockClaudeExecutor()
+        config = WorkflowConfig()
+
+        # Only set legacy config, agent config defaults to False
+        config.autonomous_mode = True
+        config.claude.dangerous_mode = True
+        config.agent.dangerous_mode = False  # Not set
+
+        phase = ImplementationPhase(context, executor, config)
+
+        # get_effective_agent_config should merge legacy config
+        effective = config.get_effective_agent_config()
+        # When agent.dangerous_mode is False but claude.dangerous_mode is True,
+        # effective should be True (for claude agent)
+        assert effective.dangerous_mode is True
+
+        # Therefore _dangerous_mode should return True
+        assert phase._dangerous_mode() is True
+
+
 class TestPreflightGitAutoUpdate:
     """Tests for preflight auto-update git behavior."""
 
