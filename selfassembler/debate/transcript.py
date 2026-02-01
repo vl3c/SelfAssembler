@@ -36,10 +36,18 @@ class DebateLog:
     providing a complete record of the back-and-forth discussion.
     """
 
-    def __init__(self, path: Path, total_messages: int = 3):
+    def __init__(
+        self,
+        path: Path,
+        total_messages: int = 3,
+        primary_agent: str = "claude",
+        secondary_agent: str = "codex",
+    ):
         self.path = path
         self.messages: list[DebateMessage] = []
         self.total_messages = total_messages
+        self.primary_agent = primary_agent
+        self.secondary_agent = secondary_agent
         self._phase: str | None = None
         self._task: str | None = None
 
@@ -47,10 +55,12 @@ class DebateLog:
         """Initialize the debate log with header."""
         self._phase = phase
         self._task = task
+        primary_name = self.primary_agent.title()
+        secondary_name = self.secondary_agent.title()
         header = f"""# Debate Transcript: {phase}
 Task: {task}
 Date: {datetime.now().isoformat()}
-Participants: Claude (Primary), Codex (Secondary)
+Participants: {primary_name} (Primary), {secondary_name} (Secondary)
 
 ---
 """
@@ -59,14 +69,16 @@ Participants: Claude (Primary), Codex (Secondary)
 
     def write_turn1_summary(self, t1_results: Turn1Results) -> None:
         """Write Turn 1 outputs summary section."""
+        primary_name = t1_results.primary_agent.title()
+        secondary_name = t1_results.secondary_agent.title()
         summary = f"""
 ## Turn 1 Outputs
 
-### Claude's Initial Analysis
-[Link to: {t1_results.claude_output_file}]
+### {primary_name}'s Initial Analysis
+[Link to: {t1_results.primary_output_file}]
 
-### Codex's Initial Analysis
-[Link to: {t1_results.codex_output_file}]
+### {secondary_name}'s Initial Analysis
+[Link to: {t1_results.secondary_output_file}]
 
 ---
 
@@ -151,12 +163,25 @@ Participants: Claude (Primary), Codex (Secondary)
 
         return "\n".join(lines)
 
+    def get_agent_messages(self, agent: str) -> list[DebateMessage]:
+        """Get all messages from a specific agent."""
+        return [m for m in self.messages if m.speaker == agent]
+
+    def get_primary_messages(self) -> list[DebateMessage]:
+        """Get all messages from the primary agent."""
+        return self.get_agent_messages(self.primary_agent)
+
+    def get_secondary_messages(self) -> list[DebateMessage]:
+        """Get all messages from the secondary agent."""
+        return self.get_agent_messages(self.secondary_agent)
+
+    # Backward compatibility
     def get_claude_messages(self) -> list[DebateMessage]:
-        """Get all messages from Claude."""
+        """Get all messages from Claude (backward compatible)."""
         return [m for m in self.messages if m.speaker == "claude"]
 
     def get_codex_messages(self) -> list[DebateMessage]:
-        """Get all messages from Codex."""
+        """Get all messages from Codex (backward compatible)."""
         return [m for m in self.messages if m.speaker == "codex"]
 
     def get_final_positions(self) -> dict[str, str]:

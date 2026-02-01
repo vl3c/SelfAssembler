@@ -549,29 +549,49 @@ def main(args: list[str] | None = None) -> int:
     if parsed.plans_dir:
         config.plans_dir = str(parsed.plans_dir)
 
-    # Apply agent selection
-    if parsed.agent:
-        config.agent.type = parsed.agent
-
     # Apply debate mode (auto-detect if not specified)
+    # This must happen before agent selection to allow auto-detect to set primary
+    from selfassembler.executors import auto_configure_agents
+
+    detected_primary, detected_secondary, detected_debate = auto_configure_agents()
+
     if parsed.no_debate:
         config.debate.enabled = False
     elif parsed.debate:
         config.debate.enabled = True
+    elif not config.debate.enabled:
+        # Auto-configure debate if not already set in config file
+        config.debate.enabled = detected_debate
+        if detected_debate:
+            config.debate.primary_agent = detected_primary
+            config.debate.secondary_agent = detected_secondary
+            if not parsed.quiet:
+                print(f"Auto-detected: Both {detected_primary} and {detected_secondary} installed, enabling debate mode")
+
+    # Apply agent selection
+    if parsed.agent:
+        # User explicitly specified agent - use it as primary
+        config.agent.type = parsed.agent
+        if config.debate.enabled:
+            # Align debate primary with explicit agent choice
+            config.debate.primary_agent = parsed.agent
+            # Set secondary to the other available agent
+            from selfassembler.executors import detect_installed_agents
+            installed = detect_installed_agents()
+
+            if parsed.agent == "claude":
+                if installed.get("codex"):
+                    config.debate.secondary_agent = "codex"
+                elif not parsed.quiet:
+                    print(f"Note: Codex not installed, using Claude vs Claude debate")
+            elif parsed.agent == "codex":
+                if installed.get("claude"):
+                    config.debate.secondary_agent = "claude"
+                elif not parsed.quiet:
+                    print(f"Note: Claude not installed, using Codex vs Codex debate")
     else:
-        # Auto-detect: enable debate if both agents are installed
-        from selfassembler.executors import auto_configure_agents
-
-        primary, secondary, debate_enabled = auto_configure_agents()
-
-        # Only auto-configure if not already set in config file
-        if not config.debate.enabled:
-            config.debate.enabled = debate_enabled
-            if debate_enabled:
-                config.debate.primary_agent = primary
-                config.debate.secondary_agent = secondary
-                if not parsed.quiet:
-                    print(f"Auto-detected: Both {primary} and {secondary} installed, enabling debate mode")
+        # No explicit agent - use auto-detected primary
+        config.agent.type = detected_primary
 
     # Determine plans directory
     plans_dir = Path(config.plans_dir)

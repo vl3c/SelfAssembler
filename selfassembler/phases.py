@@ -163,12 +163,14 @@ class DebatePhase(Phase):
             debate_subdir=debate_config.debate_subdir,
         )
 
-        # Get prompt generator for this phase
+        # Get prompt generator for this phase with dynamic agent names
         prompt_generator = get_prompt_generator(
             phase_name=self.debate_phase_name,
             task_description=self.context.task_description,
             task_name=self.context.task_name,
             plans_dir=self.context.plans_dir,
+            primary_agent=debate_config.primary_agent,
+            secondary_agent=debate_config.secondary_agent,
             **self._get_prompt_generator_kwargs(),
         )
 

@@ -126,16 +126,16 @@ class TestDebateFileManager:
 
             manager = DebateFileManager(plans_dir, "mytask")
 
-            # Research paths
+            # Research paths - use role-based keys (not agent names)
             research = manager.get_research_paths()
-            assert "claude_t1" in research
-            assert "codex_t1" in research
+            assert "primary_t1" in research
+            assert "secondary_t1" in research
             assert "debate" in research
             assert "final" in research
 
-            # Planning paths
+            # Planning paths - verify role-based naming
             planning = manager.get_planning_paths()
-            assert "plan-mytask-claude.md" in str(planning["claude_t1"])
+            assert "plan-mytask-primary.md" in str(planning["primary_t1"])
 
     def test_ensure_directories(self):
         """Test directory creation."""
@@ -222,7 +222,7 @@ class TestTurn1Results:
     def test_total_cost(self):
         """Test total cost calculation."""
         result = Turn1Results(
-            claude_result=ExecutionResult(
+            primary_result=ExecutionResult(
                 session_id="s1",
                 output="out",
                 cost_usd=0.5,
@@ -231,7 +231,7 @@ class TestTurn1Results:
                 is_error=False,
                 raw_output="{}",
             ),
-            codex_result=ExecutionResult(
+            secondary_result=ExecutionResult(
                 session_id="s2",
                 output="out",
                 cost_usd=0.3,
@@ -240,15 +240,17 @@ class TestTurn1Results:
                 is_error=False,
                 raw_output="{}",
             ),
-            claude_output_file=Path("/tmp/claude.md"),
-            codex_output_file=Path("/tmp/codex.md"),
+            primary_output_file=Path("/tmp/claude.md"),
+            secondary_output_file=Path("/tmp/codex.md"),
+            primary_agent="claude",
+            secondary_agent="codex",
         )
 
         assert result.total_cost == 0.8
 
     def test_get_agent_result(self):
         """Test getting result by agent name."""
-        claude_result = ExecutionResult(
+        primary_result = ExecutionResult(
             session_id="claude-session",
             output="claude output",
             cost_usd=0.5,
@@ -257,7 +259,7 @@ class TestTurn1Results:
             is_error=False,
             raw_output="{}",
         )
-        codex_result = ExecutionResult(
+        secondary_result = ExecutionResult(
             session_id="codex-session",
             output="codex output",
             cost_usd=0.3,
@@ -268,10 +270,12 @@ class TestTurn1Results:
         )
 
         result = Turn1Results(
-            claude_result=claude_result,
-            codex_result=codex_result,
-            claude_output_file=Path("/tmp/claude.md"),
-            codex_output_file=Path("/tmp/codex.md"),
+            primary_result=primary_result,
+            secondary_result=secondary_result,
+            primary_output_file=Path("/tmp/claude.md"),
+            secondary_output_file=Path("/tmp/codex.md"),
+            primary_agent="claude",
+            secondary_agent="codex",
         )
 
         assert result.get("claude").session_id == "claude-session"
@@ -326,7 +330,7 @@ class TestDebateResult:
     def test_cost_breakdown(self):
         """Test cost breakdown by agent."""
         turn1 = Turn1Results(
-            claude_result=ExecutionResult(
+            primary_result=ExecutionResult(
                 session_id="s1",
                 output="out",
                 cost_usd=0.5,
@@ -335,7 +339,7 @@ class TestDebateResult:
                 is_error=False,
                 raw_output="{}",
             ),
-            codex_result=ExecutionResult(
+            secondary_result=ExecutionResult(
                 session_id="s2",
                 output="out",
                 cost_usd=0.3,
@@ -344,8 +348,10 @@ class TestDebateResult:
                 is_error=False,
                 raw_output="{}",
             ),
-            claude_output_file=Path("/tmp/claude.md"),
-            codex_output_file=Path("/tmp/codex.md"),
+            primary_output_file=Path("/tmp/claude.md"),
+            secondary_output_file=Path("/tmp/codex.md"),
+            primary_agent="claude",
+            secondary_agent="codex",
         )
 
         synthesis = SynthesisResult(
@@ -603,3 +609,171 @@ class TestDebatePhaseIntegration:
             assert hasattr(phase_class, "debate_supported")
             assert hasattr(phase_class, "debate_phase_name")
             assert phase_class.debate_supported is True
+
+
+class TestSameAgentDebate:
+    """Tests for same-agent debate support (e.g., Claude vs Claude)."""
+
+    def test_file_manager_uses_roles_not_agent_names(self):
+        """Test file paths use roles to avoid collisions in same-agent debates."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plans_dir = Path(tmpdir) / "plans"
+            plans_dir.mkdir()
+
+            manager = DebateFileManager(plans_dir, "task")
+
+            # Get paths for same agent - should be different files
+            primary_path = manager.get_role_output_path("research", "primary")
+            secondary_path = manager.get_role_output_path("research", "secondary")
+
+            # Paths should be different even if agents are the same
+            assert primary_path != secondary_path
+            assert "primary" in str(primary_path)
+            assert "secondary" in str(secondary_path)
+
+    def test_turn1_results_supports_same_agent(self):
+        """Test Turn1Results works when both agents are the same type."""
+        primary_result = ExecutionResult(
+            session_id="claude-primary-session",
+            output="primary output",
+            cost_usd=0.5,
+            duration_ms=1000,
+            num_turns=5,
+            is_error=False,
+            raw_output="{}",
+        )
+        secondary_result = ExecutionResult(
+            session_id="claude-secondary-session",
+            output="secondary output",
+            cost_usd=0.3,
+            duration_ms=800,
+            num_turns=3,
+            is_error=False,
+            raw_output="{}",
+        )
+
+        # Both agents are "claude"
+        result = Turn1Results(
+            primary_result=primary_result,
+            secondary_result=secondary_result,
+            primary_output_file=Path("/tmp/research-primary.md"),
+            secondary_output_file=Path("/tmp/research-secondary.md"),
+            primary_agent="claude",
+            secondary_agent="claude",  # Same agent type
+        )
+
+        # Should be able to get both results using agent name
+        assert result.get("claude").session_id in ["claude-primary-session", "claude-secondary-session"]
+        # But primary/secondary should be distinct
+        assert result.primary_result.session_id == "claude-primary-session"
+        assert result.secondary_result.session_id == "claude-secondary-session"
+        assert result.total_cost == 0.8
+
+    def test_turn2_results_supports_same_agent(self):
+        """Test Turn2Results works when both agents are the same type."""
+        msg1 = DebateMessage(
+            speaker="codex",  # Both speakers are codex
+            message_number=1,
+            content="Primary codex message",
+            role="primary",  # Role distinguishes messages in same-agent debates
+            result=ExecutionResult(
+                session_id="s1",
+                output="m1",
+                cost_usd=0.2,
+                duration_ms=500,
+                num_turns=2,
+                is_error=False,
+                raw_output="{}",
+            ),
+        )
+        msg2 = DebateMessage(
+            speaker="codex",  # Both speakers are codex
+            message_number=2,
+            content="Secondary codex message",
+            role="secondary",  # Role distinguishes messages in same-agent debates
+            result=ExecutionResult(
+                session_id="s2",
+                output="m2",
+                cost_usd=0.15,
+                duration_ms=400,
+                num_turns=1,
+                is_error=False,
+                raw_output="{}",
+            ),
+        )
+
+        result = Turn2Results(
+            messages=[msg1, msg2],
+            primary_agent="codex",
+            secondary_agent="codex",  # Same agent
+        )
+
+        # All messages are from "codex", so get_codex_messages returns all
+        assert len(result.get_codex_messages()) == 2
+        # But we can distinguish by role
+        assert len(result.get_primary_messages()) == 1
+        assert len(result.get_secondary_messages()) == 1
+        # Verify correct message is returned
+        assert result.get_primary_messages()[0].content == "Primary codex message"
+        assert result.get_secondary_messages()[0].content == "Secondary codex message"
+
+    def test_prompt_generator_with_same_agent(self):
+        """Test prompt generators work with same primary and secondary agent."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plans_dir = Path(tmpdir)
+
+            # Both agents are Claude
+            generator = ResearchDebatePrompts(
+                task_description="Test task",
+                task_name="test",
+                plans_dir=plans_dir,
+                primary_agent="claude",
+                secondary_agent="claude",
+            )
+
+            # Both prompts should identify as Claude
+            t1_primary = generator.turn1_primary_prompt(plans_dir / "primary.md")
+            t1_secondary = generator.turn1_secondary_prompt(plans_dir / "secondary.md")
+
+            assert "PRIMARY agent (Claude)" in t1_primary
+            assert "SECONDARY agent (Claude)" in t1_secondary
+
+    def test_debate_config_allows_same_agent(self):
+        """Test DebateConfig accepts same agent for primary and secondary."""
+        from selfassembler.config import DebateConfig
+
+        # This should not raise an error
+        config = DebateConfig(
+            enabled=True,
+            primary_agent="codex",
+            secondary_agent="codex",
+        )
+
+        assert config.primary_agent == "codex"
+        assert config.secondary_agent == "codex"
+
+    def test_workflow_context_session_tracking_with_roles(self):
+        """Test session tracking uses roles to avoid collisions in same-agent debates."""
+        context = WorkflowContext(
+            task_description="Test",
+            task_name="test",
+            repo_path=Path("/tmp"),
+            plans_dir=Path("/tmp/plans"),
+        )
+
+        # Store sessions using roles (as the orchestrator now does)
+        context.set_debate_session_id("research", "primary", 1, "primary-t1-session")
+        context.set_debate_session_id("research", "secondary", 1, "secondary-t1-session")
+
+        # Should retrieve distinct sessions
+        assert context.get_debate_session_id("research", "primary", 1) == "primary-t1-session"
+        assert context.get_debate_session_id("research", "secondary", 1) == "secondary-t1-session"
+
+        # Turn 2 messages
+        context.set_debate_session_id("research", "primary", 2, "primary-t2-msg1", message_num=1)
+        context.set_debate_session_id("research", "secondary", 2, "secondary-t2-msg2", message_num=2)
+        context.set_debate_session_id("research", "primary", 2, "primary-t2-msg3", message_num=3)
+
+        assert context.get_debate_session_id("research", "primary", 2, 1) == "primary-t2-msg1"
+        assert context.get_debate_session_id("research", "secondary", 2, 2) == "secondary-t2-msg2"
+        assert context.get_debate_session_id("research", "primary", 2, 3) == "primary-t2-msg3"

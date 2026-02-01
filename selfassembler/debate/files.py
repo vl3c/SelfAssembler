@@ -13,6 +13,9 @@ class DebateFileManager:
     - Agent-specific outputs (Turn 1)
     - Debate transcripts (Turn 2)
     - Final synthesized outputs (Turn 3)
+
+    Note: File paths use roles ("primary"/"secondary") not agent names to support
+    same-agent debates (e.g., Claude vs Claude or Codex vs Codex).
     """
 
     def __init__(self, plans_dir: Path, task_name: str, debate_subdir: str = "debates"):
@@ -27,12 +30,40 @@ class DebateFileManager:
         self._debates_dir.mkdir(parents=True, exist_ok=True)
 
     # -------------------------------------------------------------------------
-    # Turn 1: Agent-specific output files
+    # Turn 1: Role-based output files
     # -------------------------------------------------------------------------
 
+    def get_role_output_path(self, phase: str, role: str) -> Path:
+        """
+        Get the path for a role's Turn 1 output.
+
+        Args:
+            phase: Phase name (e.g., "research")
+            role: Role identifier ("primary" or "secondary")
+
+        Example: plans/research-mytask-primary.md
+
+        Using roles instead of agent names allows same-agent debates
+        (e.g., Claude vs Claude).
+        """
+        filename = f"{phase}-{self.task_name}-{role}.md"
+        return self.plans_dir / filename
+
+    def get_primary_t1_path(self, phase: str) -> Path:
+        """Get primary agent's Turn 1 output path."""
+        return self.get_role_output_path(phase, "primary")
+
+    def get_secondary_t1_path(self, phase: str) -> Path:
+        """Get secondary agent's Turn 1 output path."""
+        return self.get_role_output_path(phase, "secondary")
+
+    # Backward compatibility aliases
     def get_agent_output_path(self, phase: str, agent: str) -> Path:
         """
         Get the path for an agent's Turn 1 output.
+
+        DEPRECATED: Use get_role_output_path() instead.
+        This method is kept for backward compatibility.
 
         Example: plans/research-mytask-claude.md
         """
@@ -40,11 +71,11 @@ class DebateFileManager:
         return self.plans_dir / filename
 
     def get_claude_t1_path(self, phase: str) -> Path:
-        """Get Claude's Turn 1 output path."""
+        """Get Claude's Turn 1 output path (backward compatible)."""
         return self.get_agent_output_path(phase, "claude")
 
     def get_codex_t1_path(self, phase: str) -> Path:
-        """Get Codex's Turn 1 output path."""
+        """Get Codex's Turn 1 output path (backward compatible)."""
         return self.get_agent_output_path(phase, "codex")
 
     # -------------------------------------------------------------------------
@@ -82,8 +113,8 @@ class DebateFileManager:
     def get_research_paths(self) -> dict[str, Path]:
         """Get all file paths for research phase debate."""
         return {
-            "claude_t1": self.get_claude_t1_path("research"),
-            "codex_t1": self.get_codex_t1_path("research"),
+            "primary_t1": self.get_primary_t1_path("research"),
+            "secondary_t1": self.get_secondary_t1_path("research"),
             "debate": self.get_debate_path("research"),
             "final": self.get_final_output_path("research"),
         }
@@ -91,8 +122,8 @@ class DebateFileManager:
     def get_planning_paths(self) -> dict[str, Path]:
         """Get all file paths for planning phase debate."""
         return {
-            "claude_t1": self.get_claude_t1_path("plan"),
-            "codex_t1": self.get_codex_t1_path("plan"),
+            "primary_t1": self.get_primary_t1_path("plan"),
+            "secondary_t1": self.get_secondary_t1_path("plan"),
             "debate": self.get_debate_path("plan"),
             "final": self.get_final_output_path("plan"),
         }
@@ -100,8 +131,8 @@ class DebateFileManager:
     def get_plan_review_paths(self) -> dict[str, Path]:
         """Get all file paths for plan review phase debate."""
         return {
-            "claude_t1": self.get_claude_t1_path("plan-review"),
-            "codex_t1": self.get_codex_t1_path("plan-review"),
+            "primary_t1": self.get_primary_t1_path("plan-review"),
+            "secondary_t1": self.get_secondary_t1_path("plan-review"),
             "debate": self.get_debate_path("plan-review"),
             "final": self.get_final_output_path("plan-review"),
         }
@@ -109,8 +140,8 @@ class DebateFileManager:
     def get_code_review_paths(self) -> dict[str, Path]:
         """Get all file paths for code review phase debate."""
         return {
-            "claude_t1": self.get_claude_t1_path("review"),
-            "codex_t1": self.get_codex_t1_path("review"),
+            "primary_t1": self.get_primary_t1_path("review"),
+            "secondary_t1": self.get_secondary_t1_path("review"),
             "debate": self.get_debate_path("review"),
             "final": self.get_final_output_path("review"),
         }
@@ -123,10 +154,10 @@ class DebateFileManager:
         """List all debate-related files for this task."""
         files = []
 
-        # Agent outputs
+        # Role-based outputs
         for phase in ["research", "plan", "plan-review", "review"]:
-            files.append(self.get_claude_t1_path(phase))
-            files.append(self.get_codex_t1_path(phase))
+            files.append(self.get_primary_t1_path(phase))
+            files.append(self.get_secondary_t1_path(phase))
             files.append(self.get_debate_path(phase))
             files.append(self.get_final_output_path(phase))
 
@@ -140,9 +171,9 @@ class DebateFileManager:
         """
         removed = []
         for phase in ["research", "plan", "plan-review", "review"]:
-            # Remove agent-specific files
-            for agent in ["claude", "codex"]:
-                path = self.get_agent_output_path(phase, agent)
+            # Remove role-specific files
+            for role in ["primary", "secondary"]:
+                path = self.get_role_output_path(phase, role)
                 if path.exists():
                     path.unlink()
                     removed.append(path)
