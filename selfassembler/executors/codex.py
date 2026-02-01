@@ -21,17 +21,28 @@ class CodexExecutor(AgentExecutor):
 
     Handles command construction, execution, and output parsing for the
     OpenAI Codex command-line interface.
+
+    Codex CLI uses `codex exec` for non-interactive/headless execution.
+    Key flags:
+      -a, --ask-for-approval: untrusted|on-failure|on-request|never
+      -s, --sandbox: read-only|workspace-write|danger-full-access
+      -m, --model: Model to use
+      -C, --cd: Working directory
+      --json: Output as JSONL
+      --full-auto: Shortcut for -a on-request --sandbox workspace-write
+      --dangerously-bypass-approvals-and-sandbox: Skip all prompts (DANGEROUS)
     """
 
     AGENT_TYPE = "codex"
     CLI_COMMAND = "codex"
-    INSTALL_INSTRUCTIONS = "Install with: npm install -g @openai/codex"
+    INSTALL_INSTRUCTIONS = "Install from: https://github.com/openai/codex"
 
-    # Mapping from SelfAssembler permission modes to Codex approval modes
+    # Mapping from SelfAssembler permission modes to Codex settings
+    # Returns tuple of (approval_policy, sandbox_mode)
     PERMISSION_MODE_MAP = {
-        "plan": "suggest",  # Read-only, suggestions only
-        "acceptEdits": "auto-edit",  # Auto-approve file edits
-        "default": "suggest",  # Default to suggest mode
+        "plan": ("untrusted", "read-only"),  # Read-only, require approval
+        "acceptEdits": ("on-request", "workspace-write"),  # Allow edits with model-driven approval
+        "default": ("untrusted", "read-only"),  # Safe default
     }
 
     def __init__(
@@ -54,24 +65,34 @@ class CodexExecutor(AgentExecutor):
             debug=debug,
         )
 
-    def _map_permission_mode(self, permission_mode: str | None, dangerous_mode: bool) -> str:
+    def _map_permission_mode(
+        self, permission_mode: str | None, dangerous_mode: bool
+    ) -> tuple[str | None, str | None, bool]:
         """
-        Map SelfAssembler permission modes to Codex approval modes.
+        Map SelfAssembler permission modes to Codex CLI flags.
 
         Args:
             permission_mode: SelfAssembler permission mode
             dangerous_mode: Whether dangerous mode is enabled
 
         Returns:
-            Codex approval mode string
+            Tuple of (approval_policy, sandbox_mode, use_dangerous_flag)
+            - approval_policy: Value for -a flag (or None to omit)
+            - sandbox_mode: Value for -s flag (or None to omit)
+            - use_dangerous_flag: Whether to use --dangerously-bypass-approvals-and-sandbox
         """
         if dangerous_mode:
-            return "full-auto"
+            # Use the dangerous bypass flag for full autonomy
+            return None, None, True
 
         if permission_mode is None:
-            return self.PERMISSION_MODE_MAP["default"]
+            approval, sandbox = self.PERMISSION_MODE_MAP["default"]
+            return approval, sandbox, False
 
-        return self.PERMISSION_MODE_MAP.get(permission_mode, self.PERMISSION_MODE_MAP["default"])
+        approval, sandbox = self.PERMISSION_MODE_MAP.get(
+            permission_mode, self.PERMISSION_MODE_MAP["default"]
+        )
+        return approval, sandbox, False
 
     def execute(
         self,
@@ -94,7 +115,7 @@ class CodexExecutor(AgentExecutor):
             allowed_tools: List of allowed tools (not directly supported by Codex)
             max_turns: Maximum number of agentic turns
             timeout: Timeout in seconds (uses default if not specified)
-            resume_session: Session ID to resume (not supported by Codex, ignored)
+            resume_session: Session ID to resume (supported via `codex exec resume`)
             dangerous_mode: Use full-auto approval mode
             working_dir: Override working directory
             stream: Override streaming mode (uses instance default if None)
@@ -129,13 +150,13 @@ class CodexExecutor(AgentExecutor):
             resume_session=resume_session,
             dangerous_mode=dangerous_mode,
             streaming=False,
+            working_dir=effective_working_dir,
         )
 
         start_time = time.time()
         try:
             result = subprocess.run(
                 cmd,
-                cwd=effective_working_dir,
                 capture_output=True,
                 text=True,
                 timeout=effective_timeout,
@@ -177,27 +198,55 @@ class CodexExecutor(AgentExecutor):
         resume_session: str | None = None,
         dangerous_mode: bool = False,
         streaming: bool = True,
+        working_dir: Path | None = None,
     ) -> list[str]:
-        """Build the codex CLI command."""
-        cmd = [self.CLI_COMMAND, prompt]
+        """Build the codex CLI command for headless execution.
 
-        # Map permission mode to Codex approval mode
-        approval_mode = self._map_permission_mode(permission_mode, dangerous_mode)
-        cmd.extend(["--approval-mode", approval_mode])
+        Uses `codex exec` subcommand for non-interactive operation.
+
+        Args:
+            prompt: The prompt/instruction to execute
+            permission_mode: SelfAssembler permission mode to map
+            allowed_tools: Not used (Codex doesn't support tool filtering)
+            max_turns: Not used (Codex manages turns internally)
+            resume_session: Session ID to resume via `codex exec resume`
+            dangerous_mode: Use --dangerously-bypass-approvals-and-sandbox
+            streaming: Not used in command building (handled by --json)
+            working_dir: Working directory to use via -C flag
+        """
+        # Use 'codex exec' for headless/non-interactive mode
+        if resume_session:
+            # Resume a previous session by ID
+            cmd = [self.CLI_COMMAND, "exec", "resume", resume_session]
+        else:
+            cmd = [self.CLI_COMMAND, "exec", prompt]
+
+        # Map permission mode to Codex flags
+        approval_policy, sandbox_mode, use_dangerous = self._map_permission_mode(
+            permission_mode, dangerous_mode
+        )
+
+        if use_dangerous:
+            # Full bypass - extremely dangerous, only for externally sandboxed envs
+            cmd.append("--dangerously-bypass-approvals-and-sandbox")
+        else:
+            # Apply approval policy
+            if approval_policy:
+                cmd.extend(["-a", approval_policy])
+            # Apply sandbox mode
+            if sandbox_mode:
+                cmd.extend(["-s", sandbox_mode])
 
         # Model selection
         if self.model:
-            cmd.extend(["--model", self.model])
+            cmd.extend(["-m", self.model])
 
-        # Quiet mode for non-interactive execution
-        cmd.append("--quiet")
+        # Working directory
+        if working_dir:
+            cmd.extend(["-C", str(working_dir)])
 
-        # Note: Codex doesn't support --max-turns directly, but we can use it
-        # for internal tracking. The CLI may have different options.
-
-        # Note: resume_session is not supported by Codex CLI
-
-        # Note: allowed_tools is not directly supported by Codex
+        # Use JSON output for machine-readable parsing
+        cmd.append("--json")
 
         return cmd
 
@@ -212,7 +261,9 @@ class CodexExecutor(AgentExecutor):
         dangerous_mode: bool = False,
         working_dir: Path | None = None,
     ) -> ExecutionResult:
-        """Execute with streaming output."""
+        """Execute with streaming output (JSONL)."""
+        effective_working_dir = working_dir or self.working_dir
+
         cmd = self._build_command(
             prompt=prompt,
             permission_mode=permission_mode,
@@ -221,9 +272,9 @@ class CodexExecutor(AgentExecutor):
             resume_session=resume_session,
             dangerous_mode=dangerous_mode,
             streaming=True,
+            working_dir=effective_working_dir,
         )
 
-        effective_working_dir = working_dir or self.working_dir
         start_time = time.time()
 
         # Collect output
@@ -241,7 +292,6 @@ class CodexExecutor(AgentExecutor):
         try:
             process = subprocess.Popen(
                 cmd,
-                cwd=effective_working_dir,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,

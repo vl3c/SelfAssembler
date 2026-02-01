@@ -23,8 +23,7 @@ class TestCodexExecutorAttributes:
 
     def test_install_instructions(self):
         """Test INSTALL_INSTRUCTIONS is set."""
-        assert "npm install" in CodexExecutor.INSTALL_INSTRUCTIONS
-        assert "@openai/codex" in CodexExecutor.INSTALL_INSTRUCTIONS
+        assert "github.com/openai/codex" in CodexExecutor.INSTALL_INSTRUCTIONS
 
     def test_permission_mode_map(self):
         """Test permission mode mapping is defined."""
@@ -70,115 +69,164 @@ class TestCodexExecutorInit:
 
 
 class TestCodexExecutorPermissionModeMapping:
-    """Tests for permission mode mapping."""
+    """Tests for permission mode mapping.
+
+    Returns tuple of (approval_policy, sandbox_mode, use_dangerous_flag).
+    """
 
     @pytest.fixture
     def executor(self) -> CodexExecutor:
         """Create a CodexExecutor for testing."""
         return CodexExecutor(working_dir=Path("."))
 
-    def test_plan_maps_to_suggest(self, executor: CodexExecutor):
-        """Test 'plan' mode maps to 'suggest'."""
-        mode = executor._map_permission_mode("plan", False)
-        assert mode == "suggest"
+    def test_plan_maps_to_read_only(self, executor: CodexExecutor):
+        """Test 'plan' mode maps to read-only sandbox with untrusted approval."""
+        approval, sandbox, dangerous = executor._map_permission_mode("plan", False)
+        assert approval == "untrusted"
+        assert sandbox == "read-only"
+        assert dangerous is False
 
-    def test_accept_edits_maps_to_auto_edit(self, executor: CodexExecutor):
-        """Test 'acceptEdits' mode maps to 'auto-edit'."""
-        mode = executor._map_permission_mode("acceptEdits", False)
-        assert mode == "auto-edit"
+    def test_accept_edits_maps_to_workspace_write(self, executor: CodexExecutor):
+        """Test 'acceptEdits' mode maps to workspace-write with on-request approval."""
+        approval, sandbox, dangerous = executor._map_permission_mode("acceptEdits", False)
+        assert approval == "on-request"
+        assert sandbox == "workspace-write"
+        assert dangerous is False
 
-    def test_dangerous_mode_maps_to_full_auto(self, executor: CodexExecutor):
-        """Test dangerous mode maps to 'full-auto'."""
-        mode = executor._map_permission_mode("plan", True)
-        assert mode == "full-auto"
+    def test_dangerous_mode_uses_bypass_flag(self, executor: CodexExecutor):
+        """Test dangerous mode returns use_dangerous_flag=True."""
+        approval, sandbox, dangerous = executor._map_permission_mode("plan", True)
+        assert approval is None
+        assert sandbox is None
+        assert dangerous is True
 
     def test_dangerous_mode_overrides_permission_mode(self, executor: CodexExecutor):
         """Test dangerous mode overrides any permission mode."""
-        mode = executor._map_permission_mode("acceptEdits", True)
-        assert mode == "full-auto"
+        approval, sandbox, dangerous = executor._map_permission_mode("acceptEdits", True)
+        assert dangerous is True
 
-        mode = executor._map_permission_mode(None, True)
-        assert mode == "full-auto"
+        approval, sandbox, dangerous = executor._map_permission_mode(None, True)
+        assert dangerous is True
 
     def test_none_permission_uses_default(self, executor: CodexExecutor):
-        """Test None permission mode uses default."""
-        mode = executor._map_permission_mode(None, False)
-        assert mode == "suggest"
+        """Test None permission mode uses default (read-only)."""
+        approval, sandbox, dangerous = executor._map_permission_mode(None, False)
+        assert approval == "untrusted"
+        assert sandbox == "read-only"
+        assert dangerous is False
 
     def test_unknown_permission_uses_default(self, executor: CodexExecutor):
         """Test unknown permission mode uses default."""
-        mode = executor._map_permission_mode("unknown_mode", False)
-        assert mode == "suggest"
+        approval, sandbox, dangerous = executor._map_permission_mode("unknown_mode", False)
+        assert approval == "untrusted"
+        assert sandbox == "read-only"
+        assert dangerous is False
 
 
 class TestCodexExecutorBuildCommand:
-    """Tests for _build_command method."""
+    """Tests for _build_command method.
+
+    Codex CLI uses `codex exec` for headless operation with:
+    - -a, --ask-for-approval: untrusted|on-failure|on-request|never
+    - -s, --sandbox: read-only|workspace-write|danger-full-access
+    - -m, --model: Model to use
+    - -C, --cd: Working directory
+    - --json: JSONL output
+    """
 
     @pytest.fixture
     def executor(self) -> CodexExecutor:
         """Create a CodexExecutor for testing."""
         return CodexExecutor(working_dir=Path("."))
 
-    def test_basic_command(self, executor: CodexExecutor):
-        """Test basic command building."""
+    def test_basic_command_uses_exec_subcommand(self, executor: CodexExecutor):
+        """Test basic command uses 'codex exec' for headless mode."""
         cmd = executor._build_command(
             prompt="test prompt",
             streaming=False,
         )
 
         assert cmd[0] == "codex"
+        assert cmd[1] == "exec"
         assert "test prompt" in cmd
-        assert "--approval-mode" in cmd
-        assert "--quiet" in cmd
+        assert "--json" in cmd
 
-    def test_approval_mode_included(self, executor: CodexExecutor):
-        """Test approval mode is always included."""
+    def test_approval_flag_included(self, executor: CodexExecutor):
+        """Test -a approval flag is included with correct value."""
         cmd = executor._build_command(
             prompt="test",
             permission_mode="plan",
             streaming=False,
         )
 
-        idx = cmd.index("--approval-mode")
-        assert cmd[idx + 1] == "suggest"
+        idx = cmd.index("-a")
+        assert cmd[idx + 1] == "untrusted"
 
-    def test_dangerous_mode_approval(self, executor: CodexExecutor):
-        """Test dangerous mode sets full-auto approval."""
+    def test_sandbox_flag_included(self, executor: CodexExecutor):
+        """Test -s sandbox flag is included with correct value."""
+        cmd = executor._build_command(
+            prompt="test",
+            permission_mode="plan",
+            streaming=False,
+        )
+
+        idx = cmd.index("-s")
+        assert cmd[idx + 1] == "read-only"
+
+    def test_dangerous_mode_uses_bypass_flag(self, executor: CodexExecutor):
+        """Test dangerous mode uses --dangerously-bypass-approvals-and-sandbox."""
         cmd = executor._build_command(
             prompt="test",
             dangerous_mode=True,
             streaming=False,
         )
 
-        idx = cmd.index("--approval-mode")
-        assert cmd[idx + 1] == "full-auto"
+        assert "--dangerously-bypass-approvals-and-sandbox" in cmd
+        # Should not have -a or -s flags when using dangerous bypass
+        assert "-a" not in cmd
+        assert "-s" not in cmd
 
     def test_model_option(self):
-        """Test model option is included."""
+        """Test model option uses -m flag."""
         executor = CodexExecutor(working_dir=Path("."), model="gpt-4")
         cmd = executor._build_command(prompt="test", streaming=False)
 
-        assert "--model" in cmd
-        assert "gpt-4" in cmd
+        assert "-m" in cmd
+        idx = cmd.index("-m")
+        assert cmd[idx + 1] == "gpt-4"
 
-    def test_quiet_always_included(self, executor: CodexExecutor):
-        """Test --quiet is always included."""
-        cmd = executor._build_command(prompt="test", streaming=True)
-        assert "--quiet" in cmd
-
-        cmd = executor._build_command(prompt="test", streaming=False)
-        assert "--quiet" in cmd
-
-    def test_resume_session_ignored(self, executor: CodexExecutor):
-        """Test that resume_session doesn't cause errors (not supported)."""
+    def test_working_dir_uses_c_flag(self, executor: CodexExecutor):
+        """Test working directory uses -C flag."""
         cmd = executor._build_command(
             prompt="test",
-            resume_session="some-session",
+            streaming=False,
+            working_dir=Path("/my/project"),
+        )
+
+        assert "-C" in cmd
+        idx = cmd.index("-C")
+        assert cmd[idx + 1] == "/my/project"
+
+    def test_json_always_included(self, executor: CodexExecutor):
+        """Test --json is always included for machine-readable output."""
+        cmd = executor._build_command(prompt="test", streaming=True)
+        assert "--json" in cmd
+
+        cmd = executor._build_command(prompt="test", streaming=False)
+        assert "--json" in cmd
+
+    def test_resume_session_uses_exec_resume(self, executor: CodexExecutor):
+        """Test resume_session uses 'codex exec resume <id>'."""
+        cmd = executor._build_command(
+            prompt="test",
+            resume_session="session-123",
             streaming=False,
         )
 
-        # Should not include --resume since Codex doesn't support it
-        assert "--resume" not in cmd
+        assert cmd[0] == "codex"
+        assert cmd[1] == "exec"
+        assert cmd[2] == "resume"
+        assert cmd[3] == "session-123"
 
     def test_allowed_tools_ignored(self, executor: CodexExecutor):
         """Test that allowed_tools doesn't cause errors (not supported)."""
@@ -419,7 +467,11 @@ class TestCodexExecutorExecute:
         )
 
         call_args = mock_run.call_args
-        assert call_args.kwargs["cwd"] == Path("/override")
+        cmd = call_args[0][0]  # First positional arg is the command list
+        # Working dir is passed via -C flag, not cwd
+        assert "-C" in cmd
+        idx = cmd.index("-C")
+        assert cmd[idx + 1] == "/override"
         assert call_args.kwargs["timeout"] == 300
 
 
