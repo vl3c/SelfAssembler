@@ -7,7 +7,7 @@
 
 SelfAssembler automates the complete software development lifecycle by orchestrating CLI coding agents through 16 distinct phases: environment validation, git worktree setup, research, planning, implementation, testing with fix loops, code review, documentation, commits, and PR creation with self-review.
 
-Supports multiple agent backends:
+Supports multiple agent backends (Claude Code and OpenAI Codex):
 - **Claude Code** (default) - Anthropic's Claude Code CLI
 - **OpenAI Codex** - OpenAI's Codex CLI
 
