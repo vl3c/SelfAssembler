@@ -196,26 +196,45 @@ class TestGitManagerFetch:
     """Tests for fetch method."""
 
     @patch("selfassembler.git.GitManager._validate_repo")
+    @patch("selfassembler.git.GitManager.has_remote")
     @patch("selfassembler.git.GitManager._run")
-    def test_fetch_default(self, mock_run, mock_validate):
+    def test_fetch_default(self, mock_run, mock_has_remote, mock_validate):
         """Test fetching with default remote."""
+        mock_has_remote.return_value = True
         mock_run.return_value = MagicMock(returncode=0)
 
         manager = GitManager(Path("/test/repo"))
         manager.fetch()
 
+        mock_has_remote.assert_called_once_with("origin")
         mock_run.assert_called_once_with(["fetch", "origin"])
 
     @patch("selfassembler.git.GitManager._validate_repo")
+    @patch("selfassembler.git.GitManager.has_remote")
     @patch("selfassembler.git.GitManager._run")
-    def test_fetch_custom_remote(self, mock_run, mock_validate):
+    def test_fetch_custom_remote(self, mock_run, mock_has_remote, mock_validate):
         """Test fetching from custom remote."""
+        mock_has_remote.return_value = True
         mock_run.return_value = MagicMock(returncode=0)
 
         manager = GitManager(Path("/test/repo"))
         manager.fetch(remote="upstream")
 
+        mock_has_remote.assert_called_once_with("upstream")
         mock_run.assert_called_once_with(["fetch", "upstream"])
+
+    @patch("selfassembler.git.GitManager._validate_repo")
+    @patch("selfassembler.git.GitManager.has_remote")
+    @patch("selfassembler.git.GitManager._run")
+    def test_fetch_no_remote_skips(self, mock_run, mock_has_remote, mock_validate):
+        """Test fetching with no remote skips fetch."""
+        mock_has_remote.return_value = False
+
+        manager = GitManager(Path("/test/repo"))
+        manager.fetch()
+
+        mock_has_remote.assert_called_once_with("origin")
+        mock_run.assert_not_called()
 
 
 class TestGitManagerIsClean:
