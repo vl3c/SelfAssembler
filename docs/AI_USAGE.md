@@ -4,7 +4,7 @@ This document provides comprehensive documentation for AI agents to understand a
 
 ## Overview
 
-SelfAssembler is a CLI tool that orchestrates AI coding agents (Claude Code or OpenAI Codex) through a 16-phase software development workflow. It automates research, planning, implementation, testing, code review, and PR creation.
+SelfAssembler is a CLI tool that orchestrates AI coding agents (Claude Code or OpenAI Codex) through a multi-phase software development workflow. It automates research, planning, implementation, testing, code review, and PR creation.
 
 ## Command Syntax
 

@@ -5,7 +5,7 @@
 
 **Autonomous multi-phase workflow orchestrator for CLI coding agents.**
 
-SelfAssembler automates the complete software development lifecycle by orchestrating collaborative CLI coding agents through 16 distinct phases: environment validation, git worktree setup, research, planning, implementation, testing with fix loops, code review, documentation, commits, and PR creation with self-review.
+SelfAssembler automates the complete software development lifecycle by orchestrating collaborative CLI coding agents through distinct phases: environment validation, git worktree setup, research, planning, implementation, testing with fix loops, code review, documentation, commits, and PR creation with self-review.
 
 Supports multiple agent backends:
 - **Claude Code** (default) - Anthropic's Claude Code CLI
@@ -31,7 +31,7 @@ Optionally enables **multi-agent debate** where Claude and Codex collaborate thr
 
 ## Features
 
-- **16-Phase Workflow**: Complete development lifecycle from preflight to PR self-review
+- **Multi-Phase Workflow**: Complete development lifecycle from preflight to PR self-review
 - **Multi-Agent Debate**: Optional Claude + Codex collaboration through structured 3-turn debates
 - **Cost Tracking**: Budget limits with per-phase cost monitoring and alerts
 - **Checkpoint Recovery**: Resume workflows from any phase after interruption
@@ -151,7 +151,7 @@ selfassembler "Task" --name task --skip-to implementation
 
 ## Workflow Phases
 
-SelfAssembler executes 16 phases in sequence:
+SelfAssembler executes the following phases in sequence:
 
 | # | Phase | Description | Approval Gate |
 |---|-------|-------------|---------------|
@@ -472,7 +472,7 @@ ruff format .
             ▼                 ▼                 ▼
 ┌───────────────────┐ ┌───────────────┐ ┌───────────────────┐
 │ Phases (phases.py)│ │State (state.py)│ │Notifications      │
-│ 16 phase classes  │ │ Checkpoints   │ │ (notifications.py)│
+│ Phase classes     │ │ Checkpoints   │ │ (notifications.py)│
 └───────────────────┘ │ Approvals     │ └───────────────────┘
             │         └───────────────┘
             ├─────────────────┐
@@ -502,7 +502,7 @@ ruff format .
 
 - **`cli.py`**: Command-line interface with argparse
 - **`orchestrator.py`**: Manages phase transitions, checkpoints, approvals
-- **`phases.py`**: All 16 phase implementations
+- **`phases.py`**: All phase implementations
 - **`executors/`**: Agent CLI implementations (Claude, Codex)
 - **`debate/`**: Multi-agent debate system (orchestrator, prompts, transcripts)
 - **`context.py`**: Workflow state with cost tracking
