@@ -15,10 +15,19 @@ class BaseDebatePromptGenerator(ABC):
 
     phase_name: str = "base"
 
-    def __init__(self, task_description: str, task_name: str, plans_dir: Path):
+    def __init__(
+        self,
+        task_description: str,
+        task_name: str,
+        plans_dir: Path,
+        primary_agent: str = "Claude",
+        secondary_agent: str = "Codex",
+    ):
         self.task_description = task_description
         self.task_name = task_name
         self.plans_dir = plans_dir
+        self.primary_agent = primary_agent.title()  # Capitalize for display
+        self.secondary_agent = secondary_agent.title()
 
     # -------------------------------------------------------------------------
     # Turn 1: Independent Generation Prompts
@@ -48,69 +57,98 @@ class BaseDebatePromptGenerator(ABC):
         other_t1_output: Path,
         is_final_message: bool,
     ) -> str:
-        """Generate prompt for a debate message."""
-        if message_number == 1:
-            return self._message_1_prompt(
-                own_t1_output=own_t1_output,
-                other_t1_output=other_t1_output,
-                total_messages=total_messages,
-            )
-        elif message_number == 2:
-            return self._message_2_prompt(
+        """Generate prompt for a debate message.
+
+        Args:
+            speaker: "claude" or "codex" - the agent sending this message
+            message_number: 1-indexed message number in the exchange
+            total_messages: Total messages in the debate (should be odd)
+            transcript_so_far: Debate transcript accumulated so far
+            own_t1_output: Path to this speaker's Turn 1 output
+            other_t1_output: Path to the other agent's Turn 1 output
+            is_final_message: True if this is the last message in the debate
+        """
+        if is_final_message:
+            # Final message is always Claude's closing rebuttal
+            return self._final_message_prompt(
+                speaker=speaker,
                 transcript_so_far=transcript_so_far,
                 own_t1_output=own_t1_output,
+                message_number=message_number,
+                total_messages=total_messages,
+            )
+        elif speaker == "claude":
+            # Claude's opening or intermediate message
+            return self._claude_message_prompt(
+                transcript_so_far=transcript_so_far,
+                own_t1_output=own_t1_output,
+                other_t1_output=other_t1_output,
+                message_number=message_number,
                 total_messages=total_messages,
             )
         else:
-            return self._final_message_prompt(
+            # Codex's response
+            return self._codex_message_prompt(
                 transcript_so_far=transcript_so_far,
                 own_t1_output=own_t1_output,
                 message_number=message_number,
                 total_messages=total_messages,
             )
 
-    def _message_1_prompt(
+    def _claude_message_prompt(
         self,
+        transcript_so_far: str,
         own_t1_output: Path,
         other_t1_output: Path,
+        message_number: int,
         total_messages: int,
     ) -> str:
-        """Generate Message 1 prompt (Claude opens, critiques Codex)."""
-        return f"""# Debate: {self.phase_name} - Message 1 of {total_messages} (Claude)
+        """Generate primary agent's message prompt (opening or intermediate)."""
+        context_section = f"""## Context
+You are the PRIMARY agent ({self.primary_agent}) in a multi-agent debate.
 
-## Context
-You are the PRIMARY agent (Claude) in a multi-agent debate.
+- Your original analysis: {own_t1_output}
+- {self.secondary_agent}'s analysis: {other_t1_output}
+"""
+        if message_number > 1:
+            context_section = f"""## Previous Exchange
+{transcript_so_far}
 
-- My original analysis: {own_t1_output}
-- Codex's analysis: {other_t1_output}
+## Your Original Analysis
+Reference: {own_t1_output}
+"""
 
+        return f"""# Debate: {self.phase_name} - Message {message_number} of {total_messages} ({self.primary_agent})
+
+{context_section}
 ## Instructions
 Read both analyses and provide your response:
 
 ### Points of Agreement
-[What Codex got right that aligns with your analysis]
+[What {self.secondary_agent} got right that aligns with your analysis]
 
 ### Points of Disagreement
-[Where you believe Codex's analysis is incomplete/incorrect, with reasoning]
+[Where you believe {self.secondary_agent}'s analysis is incomplete/incorrect, with reasoning]
 
-### Gaps Codex Identified
-[Valid points from Codex that you missed - concede these openly]
+### Gaps {self.secondary_agent} Identified
+[Valid points from {self.secondary_agent} that you missed - concede these openly]
 
 ### Your Revised Position
 [Your updated analysis incorporating valid feedback]
 
 ---
-NOTE: This is message 1 of {total_messages}. Codex will respond next, then you'll have one final rebuttal.
+NOTE: This is message {message_number} of {total_messages}. {self.secondary_agent} will respond next.
 """
 
-    def _message_2_prompt(
+    def _codex_message_prompt(
         self,
         transcript_so_far: str,
         own_t1_output: Path,
+        message_number: int,
         total_messages: int,
     ) -> str:
-        """Generate Message 2 prompt (Codex responds to Claude)."""
-        return f"""# Debate: {self.phase_name} - Message 2 of {total_messages} (Codex)
+        """Generate secondary agent's response prompt."""
+        return f"""# Debate: {self.phase_name} - Message {message_number} of {total_messages} ({self.secondary_agent})
 
 ## Previous Exchange
 {transcript_so_far}
@@ -119,10 +157,10 @@ NOTE: This is message 1 of {total_messages}. Codex will respond next, then you'l
 Read: {own_t1_output}
 
 ## Instructions
-Respond to Claude's critique:
+Respond to {self.primary_agent}'s critique:
 
-### Addressing Claude's Disagreements
-[For each point Claude disagreed with, provide counter-argument or concede]
+### Addressing {self.primary_agent}'s Disagreements
+[For each point {self.primary_agent} disagreed with, provide counter-argument or concede]
 
 ### Additional Evidence
 [New findings or reasoning that supports your original points]
@@ -131,18 +169,19 @@ Respond to Claude's critique:
 [Your updated analysis - what you now stand by and what you've revised]
 
 ---
-NOTE: This is message 2 of {total_messages}. Claude will provide the final rebuttal next.
+NOTE: This is message {message_number} of {total_messages}. {self.primary_agent} will respond next.
 """
 
     def _final_message_prompt(
         self,
+        speaker: str,
         transcript_so_far: str,
         own_t1_output: Path,
         message_number: int,
         total_messages: int,
     ) -> str:
-        """Generate final message prompt (Claude's final rebuttal)."""
-        return f"""# Debate: {self.phase_name} - Message {message_number} of {total_messages} (Claude - FINAL)
+        """Generate final message prompt (primary agent's closing rebuttal)."""
+        return f"""# Debate: {self.phase_name} - Message {message_number} of {total_messages} ({self.primary_agent} - FINAL)
 
 ## Full Exchange
 {transcript_so_far}
@@ -151,7 +190,7 @@ NOTE: This is message 2 of {total_messages}. Claude will provide the final rebut
 Provide your final position:
 
 ### Resolved Disagreements
-[Points where you reached consensus with Codex]
+[Points where you reached consensus with {self.secondary_agent}]
 
 ### Remaining Disagreements
 [Points where you still differ - document both positions clearly]
@@ -180,7 +219,7 @@ You are synthesizing outputs from a multi-agent debate.
 
 ## Available Inputs
 1. Your original output: {t1_results.claude_output_file}
-2. Codex original output: {t1_results.codex_output_file}
+2. {self.secondary_agent} original output: {t1_results.codex_output_file}
 3. Full debate transcript (contains revised positions):
 
 {debate_transcript}
@@ -224,7 +263,7 @@ class ResearchDebatePrompts(BaseDebatePromptGenerator):
     def turn1_primary_prompt(self, output_file: Path) -> str:
         return f"""# Research Task: {self.task_description}
 
-You are the PRIMARY agent (Claude Code) in a multi-agent workflow.
+You are the PRIMARY agent ({self.primary_agent}) in a multi-agent workflow.
 
 ## Instructions
 
@@ -256,7 +295,7 @@ Format the research as markdown with clear sections.
     def turn1_secondary_prompt(self, output_file: Path) -> str:
         return f"""# Research Task: {self.task_description}
 
-You are the SECONDARY agent (Codex) in a multi-agent workflow.
+You are the SECONDARY agent ({self.secondary_agent}) in a multi-agent workflow.
 
 ## Instructions
 
@@ -353,7 +392,7 @@ Write your plan to: {output_file}
 
         return f"""# Planning Task: {self.task_description}
 
-You are the SECONDARY agent (Codex) in a multi-agent workflow.
+You are the SECONDARY agent ({self.secondary_agent}) in a multi-agent workflow.
 {research_ref}
 ## Instructions
 
@@ -447,7 +486,7 @@ Format:
 
         return f"""# Plan Review Task: {self.task_description}
 
-You are the SECONDARY agent (Codex) in a multi-agent workflow.
+You are the SECONDARY agent ({self.secondary_agent}) in a multi-agent workflow.
 
 ## Instructions
 
@@ -485,15 +524,23 @@ class CodeReviewDebatePrompts(BaseDebatePromptGenerator):
         task_description: str,
         task_name: str,
         plans_dir: Path,
+        primary_agent: str = "Claude",
+        secondary_agent: str = "Codex",
         base_branch: str = "main",
     ):
-        super().__init__(task_description, task_name, plans_dir)
+        super().__init__(
+            task_description=task_description,
+            task_name=task_name,
+            plans_dir=plans_dir,
+            primary_agent=primary_agent,
+            secondary_agent=secondary_agent,
+        )
         self.base_branch = base_branch
 
     def turn1_primary_prompt(self, output_file: Path) -> str:
         return f"""# Code Review Task: {self.task_description}
 
-You are the PRIMARY agent (Claude Code) in a multi-agent workflow.
+You are the PRIMARY agent ({self.primary_agent}) in a multi-agent workflow.
 
 ## Instructions
 
@@ -542,7 +589,7 @@ Format:
     def turn1_secondary_prompt(self, output_file: Path) -> str:
         return f"""# Code Review Task: {self.task_description}
 
-You are the SECONDARY agent (Codex) in a multi-agent workflow.
+You are the SECONDARY agent ({self.secondary_agent}) in a multi-agent workflow.
 
 ## Instructions
 
@@ -580,9 +627,21 @@ def get_prompt_generator(
     task_description: str,
     task_name: str,
     plans_dir: Path,
+    primary_agent: str = "Claude",
+    secondary_agent: str = "Codex",
     **kwargs,
 ) -> BaseDebatePromptGenerator:
-    """Factory function to get the appropriate prompt generator for a phase."""
+    """Factory function to get the appropriate prompt generator for a phase.
+
+    Args:
+        phase_name: Name of the phase (research, planning, plan_review, code_review)
+        task_description: Description of the task
+        task_name: Short name for the task
+        plans_dir: Path to plans directory
+        primary_agent: Name of the primary agent (default: Claude)
+        secondary_agent: Name of the secondary agent (default: Codex)
+        **kwargs: Additional arguments passed to the generator
+    """
     generators = {
         "research": ResearchDebatePrompts,
         "planning": PlanningDebatePrompts,
@@ -598,5 +657,7 @@ def get_prompt_generator(
         task_description=task_description,
         task_name=task_name,
         plans_dir=plans_dir,
+        primary_agent=primary_agent,
+        secondary_agent=secondary_agent,
         **kwargs,
     )
