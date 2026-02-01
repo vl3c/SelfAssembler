@@ -61,21 +61,30 @@ class TestDebateConfig:
         """Test DebateConfig validation."""
         from pydantic import ValidationError
 
-        # Valid values
+        # Valid values (max_exchange_messages must be odd, 3-5)
         DebateConfig(max_turns=1)
         DebateConfig(max_turns=5)
-        DebateConfig(max_exchange_messages=2)
-        DebateConfig(max_exchange_messages=6)
+        DebateConfig(max_exchange_messages=3)
+        DebateConfig(max_exchange_messages=5)
 
         # Invalid values
         with pytest.raises(ValidationError):
             DebateConfig(max_turns=0)
         with pytest.raises(ValidationError):
             DebateConfig(max_turns=6)
+        # max_exchange_messages must be >= 3
         with pytest.raises(ValidationError):
             DebateConfig(max_exchange_messages=1)
         with pytest.raises(ValidationError):
+            DebateConfig(max_exchange_messages=2)
+        # max_exchange_messages must be <= 5
+        with pytest.raises(ValidationError):
+            DebateConfig(max_exchange_messages=6)
+        with pytest.raises(ValidationError):
             DebateConfig(max_exchange_messages=7)
+        # max_exchange_messages must be odd
+        with pytest.raises(ValidationError):
+            DebateConfig(max_exchange_messages=4)
 
     def test_debate_config_save_load(self):
         """Test saving and loading debate configuration."""

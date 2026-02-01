@@ -47,6 +47,8 @@ class DebateOrchestrator:
         self.config = config
         self.context = context
         self.files = file_manager
+        # Set during run_debate() to use phase-specific limits
+        self._max_turns: int = 50
 
     def run_debate(
         self,
@@ -55,6 +57,7 @@ class DebateOrchestrator:
         permission_mode: str | None = None,
         allowed_tools: list[str] | None = None,
         dangerous_mode: bool = False,
+        max_turns: int = 50,
     ) -> DebateResult:
         """
         Execute the full 3-turn debate.
@@ -69,6 +72,9 @@ class DebateOrchestrator:
         Returns:
             DebateResult with all turn results and final output
         """
+        # Store max_turns for use in internal methods
+        self._max_turns = max_turns
+
         self.files.ensure_directories()
 
         # Determine file paths
@@ -186,7 +192,7 @@ class DebateOrchestrator:
                 prompt=claude_prompt,
                 permission_mode=permission_mode,
                 allowed_tools=allowed_tools,
-                max_turns=50,
+                max_turns=self._max_turns,
                 timeout=self.config.turn_timeout_seconds,
                 dangerous_mode=dangerous_mode,
                 working_dir=self.context.get_working_dir(),
@@ -197,7 +203,7 @@ class DebateOrchestrator:
                 prompt=codex_prompt,
                 permission_mode=permission_mode,
                 allowed_tools=allowed_tools,
-                max_turns=50,
+                max_turns=self._max_turns,
                 timeout=self.config.turn_timeout_seconds,
                 dangerous_mode=True,  # Codex always runs in autonomous mode
                 working_dir=self.context.get_working_dir(),
@@ -228,7 +234,7 @@ class DebateOrchestrator:
             prompt=claude_prompt,
             permission_mode=permission_mode,
             allowed_tools=allowed_tools,
-            max_turns=50,
+            max_turns=self._max_turns,
             timeout=self.config.turn_timeout_seconds,
             dangerous_mode=dangerous_mode,
             working_dir=self.context.get_working_dir(),
@@ -238,7 +244,7 @@ class DebateOrchestrator:
             prompt=codex_prompt,
             permission_mode=permission_mode,
             allowed_tools=allowed_tools,
-            max_turns=50,
+            max_turns=self._max_turns,
             timeout=self.config.turn_timeout_seconds,
             dangerous_mode=True,  # Codex always runs in autonomous mode
             working_dir=self.context.get_working_dir(),
@@ -306,7 +312,7 @@ class DebateOrchestrator:
                 prompt=prompt,
                 permission_mode=permission_mode,
                 allowed_tools=allowed_tools,
-                max_turns=20,
+                max_turns=self._max_turns,
                 timeout=self.config.message_timeout_seconds,
                 resume_session=resume_session,
                 dangerous_mode=effective_dangerous_mode,
@@ -385,7 +391,7 @@ class DebateOrchestrator:
             prompt=prompt,
             permission_mode=permission_mode,
             allowed_tools=allowed_tools,
-            max_turns=30,
+            max_turns=self._max_turns,
             timeout=self.config.turn_timeout_seconds,
             resume_session=resume_session,
             dangerous_mode=dangerous_mode,

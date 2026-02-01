@@ -169,6 +169,8 @@ class DebatePhase(Phase):
             task_description=self.context.task_description,
             task_name=self.context.task_name,
             plans_dir=self.context.plans_dir,
+            primary_agent=debate_config.primary_agent,
+            secondary_agent=debate_config.secondary_agent,
             **self._get_prompt_generator_kwargs(),
         )
 
@@ -181,6 +183,9 @@ class DebatePhase(Phase):
             file_manager=file_manager,
         )
 
+        # Get phase-specific max_turns
+        phase_config = self.get_phase_config()
+
         # Run debate
         debate_result = orchestrator.run_debate(
             phase_name=self.debate_phase_name,
@@ -188,6 +193,7 @@ class DebatePhase(Phase):
             permission_mode=self._get_permission_mode(),
             allowed_tools=self.allowed_tools,
             dangerous_mode=self._dangerous_mode(),
+            max_turns=phase_config.max_turns,
         )
 
         # Add costs to context
