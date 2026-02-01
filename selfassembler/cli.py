@@ -77,6 +77,21 @@ Examples:
         help="Disable approval gates (still prompts for permissions unless --autonomous)",
     )
 
+    # Debate mode (mutually exclusive)
+    debate_group = mode_group.add_mutually_exclusive_group()
+    debate_group.add_argument(
+        "--debate",
+        action="store_true",
+        default=None,
+        help="Enable multi-agent debate mode (Claude + Codex). "
+        "Auto-enabled when both agents are installed.",
+    )
+    debate_group.add_argument(
+        "--no-debate",
+        action="store_true",
+        help="Disable multi-agent debate, use single agent only.",
+    )
+
     # Resume and skip
     resume_group = parser.add_argument_group("resume options")
     resume_group.add_argument(
@@ -537,6 +552,26 @@ def main(args: list[str] | None = None) -> int:
     # Apply agent selection
     if parsed.agent:
         config.agent.type = parsed.agent
+
+    # Apply debate mode (auto-detect if not specified)
+    if parsed.no_debate:
+        config.debate.enabled = False
+    elif parsed.debate:
+        config.debate.enabled = True
+    else:
+        # Auto-detect: enable debate if both agents are installed
+        from selfassembler.executors import auto_configure_agents
+
+        primary, secondary, debate_enabled = auto_configure_agents()
+
+        # Only auto-configure if not already set in config file
+        if not config.debate.enabled:
+            config.debate.enabled = debate_enabled
+            if debate_enabled:
+                config.debate.primary_agent = primary
+                config.debate.secondary_agent = secondary
+                if not parsed.quiet:
+                    print(f"Auto-detected: Both {primary} and {secondary} installed, enabling debate mode")
 
     # Determine plans directory
     plans_dir = Path(config.plans_dir)

@@ -5,7 +5,10 @@ from selfassembler.executors.claude import ClaudeExecutor, MockClaudeExecutor
 from selfassembler.executors.codex import CodexExecutor, MockCodexExecutor
 from selfassembler.executors.factory import (
     EXECUTOR_REGISTRY,
+    auto_configure_agents,
     create_executor,
+    detect_installed_agents,
+    get_available_agents,
     get_executor_class,
     list_available_agents,
     register_executor,
@@ -23,7 +26,10 @@ __all__ = [
     "CodexExecutor",
     "MockCodexExecutor",
     # Factory functions
+    "auto_configure_agents",
     "create_executor",
+    "detect_installed_agents",
+    "get_available_agents",
     "get_executor_class",
     "list_available_agents",
     "register_executor",
