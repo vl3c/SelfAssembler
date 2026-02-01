@@ -1137,11 +1137,17 @@ class ConflictCheckPhase(Phase):
         base_branch = self.config.git.base_branch
 
         try:
-            # Fetch latest
+            # Fetch latest (no-op if no remote)
             git.fetch()
 
+            # Determine rebase target - use origin if available, otherwise local branch
+            if git.has_remote():
+                rebase_target = f"origin/{base_branch}"
+            else:
+                rebase_target = base_branch
+
             # Try rebase
-            success, conflicts = git.rebase(f"origin/{base_branch}", cwd=workdir)
+            success, conflicts = git.rebase(rebase_target, cwd=workdir)
 
             if success:
                 return PhaseResult(success=True)
@@ -1207,6 +1213,16 @@ class PRCreationPhase(Phase):
 
         if not branch_name:
             return PhaseResult(success=False, error="No branch name set")
+
+        # Skip PR creation for local-only repos
+        if not git.has_remote():
+            return PhaseResult(
+                success=True,
+                artifacts={
+                    "skipped": "No remote configured - local-only repo",
+                    "branch_name": branch_name,
+                },
+            )
 
         try:
             # Push branch

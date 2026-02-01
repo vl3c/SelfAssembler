@@ -65,8 +65,15 @@ class GitManager:
         output = result.stdout.strip()
         return (len(output) == 0, output)
 
+    def has_remote(self, remote: str = "origin") -> bool:
+        """Check if a remote exists."""
+        result = self._run(["remote", "get-url", remote], check=False)
+        return result.returncode == 0
+
     def fetch(self, remote: str = "origin") -> None:
         """Fetch from remote."""
+        if not self.has_remote(remote):
+            return  # No-op for local-only repos
         self._run(["fetch", remote])
 
     def get_current_branch(self, cwd: Path | None = None) -> str:
@@ -90,7 +97,12 @@ class GitManager:
         return "main"
 
     def commits_behind(self, base_branch: str = "main", remote: str = "origin") -> int:
-        """Check how many commits behind the remote we are."""
+        """Check how many commits behind the remote we are.
+
+        Returns 0 if no remote exists (local-only repos are always up-to-date).
+        """
+        if not self.has_remote(remote):
+            return 0  # Local-only repos are always up-to-date
         self.fetch(remote)
         result = self._run(
             ["rev-list", "--count", f"HEAD..{remote}/{base_branch}"],
@@ -232,14 +244,21 @@ class GitManager:
         remote: str = "origin",
         cwd: Path | None = None,
         set_upstream: bool = True,
-    ) -> None:
-        """Push branch to remote."""
+    ) -> bool:
+        """Push branch to remote.
+
+        Returns:
+            True if pushed successfully, False if no remote exists.
+        """
+        if not self.has_remote(remote):
+            return False  # No-op for local-only repos
         args = ["push"]
         if set_upstream:
             args.extend(["-u", remote, branch])
         else:
             args.extend([remote, branch])
         self._run(args, cwd=cwd)
+        return True
 
     def delete_remote_branch(
         self,
