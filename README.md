@@ -5,11 +5,13 @@
 
 **Autonomous multi-phase workflow orchestrator for CLI coding agents.**
 
-SelfAssembler automates the complete software development lifecycle by orchestrating colaborative CLI coding agents through 16 distinct phases: environment validation, git worktree setup, research, planning, implementation, testing with fix loops, code review, documentation, commits, and PR creation with self-review.
+SelfAssembler automates the complete software development lifecycle by orchestrating collaborative CLI coding agents through 16 distinct phases: environment validation, git worktree setup, research, planning, implementation, testing with fix loops, code review, documentation, commits, and PR creation with self-review.
 
 Supports multiple agent backends:
 - **Claude Code** (default) - Anthropic's Claude Code CLI
 - **OpenAI Codex** - OpenAI's Codex CLI
+
+Optionally enables **multi-agent debate** where Claude and Codex collaborate through structured debates on key phases for higher quality outputs.
 
 ## Table of Contents
 
@@ -20,6 +22,7 @@ Supports multiple agent backends:
 - [Workflow Phases](#workflow-phases)
 - [Configuration](#configuration)
 - [Operating Modes](#operating-modes)
+- [Multi-Agent Debate](#multi-agent-debate)
 - [Checkpoints & Recovery](#checkpoints--recovery)
 - [Notifications](#notifications)
 - [Development](#development)
@@ -29,6 +32,7 @@ Supports multiple agent backends:
 ## Features
 
 - **16-Phase Workflow**: Complete development lifecycle from preflight to PR self-review
+- **Multi-Agent Debate**: Optional Claude + Codex collaboration through structured 3-turn debates
 - **Cost Tracking**: Budget limits with per-phase cost monitoring and alerts
 - **Checkpoint Recovery**: Resume workflows from any phase after interruption
 - **Approval Gates**: Pause for human review at configurable points
@@ -219,6 +223,18 @@ rules:
     - "no-signature"  # Available: no-signature, no-emojis, no-yapping
   custom_rules: []    # Add custom rule descriptions
 
+# Multi-agent debate (optional)
+debate:
+  enabled: false
+  primary_agent: claude
+  secondary_agent: codex
+  max_exchange_messages: 3
+  phases:
+    research: true
+    planning: true
+    plan_review: true
+    code_review: true
+
 # Notifications
 notifications:
   console:
@@ -277,6 +293,71 @@ docker run --rm -it \
   --name auth-system \
   --autonomous
 ```
+
+## Multi-Agent Debate
+
+SelfAssembler supports an optional **multi-agent debate mode** where Claude (primary) and Codex (secondary) collaborate through structured debates to produce higher-quality outputs.
+
+### How It Works
+
+The debate follows a 3-turn structure:
+
+1. **Turn 1 - Independent Generation**: Both agents work in parallel, producing independent analyses
+2. **Turn 2 - Debate Exchange**: Agents exchange 3 messages (Claude → Codex → Claude), critiquing and responding to each other's work
+3. **Turn 3 - Synthesis**: Claude synthesizes all outputs into a final result, incorporating the best from both agents
+
+### Debate-Enabled Phases
+
+| Phase | Rationale |
+|-------|-----------|
+| **Research** | Two agents find different information; synthesis catches gaps |
+| **Planning** | Alternative plans reveal different architectures and trade-offs |
+| **Plan Review** | Independent SWOT analyses from different perspectives |
+| **Code Review** | Two reviewers catch different issues |
+
+### Enabling Debate Mode
+
+Add to your `selfassembler.yaml`:
+
+```yaml
+debate:
+  enabled: true
+  primary_agent: claude
+  secondary_agent: codex
+  max_exchange_messages: 3  # Messages in Turn 2 (2-6)
+  parallel_turn_1: true     # Run Turn 1 in parallel
+  phases:
+    research: true
+    planning: true
+    plan_review: true
+    code_review: true
+```
+
+### Output Files
+
+Debate mode produces additional files in your plans directory:
+
+```
+plans/
+  # Agent-specific outputs (Turn 1)
+  research-{task}-claude.md
+  research-{task}-codex.md
+
+  # Debate transcripts (Turn 2)
+  debates/
+    research-{task}-debate.md
+
+  # Final synthesized output (Turn 3)
+  research-{task}.md
+```
+
+### Cost Considerations
+
+Debate mode increases costs approximately 2-2.5x per phase:
+- Claude: ~60% of cost (Turn 1 + Turn 2 messages + Synthesis)
+- Codex: ~40% of cost (Turn 1 + Turn 2 messages)
+
+Consider increasing `budget_limit_usd` when using debate mode.
 
 ## Checkpoints & Recovery
 
@@ -394,13 +475,21 @@ ruff format .
 │ 16 phase classes  │ │ Checkpoints   │ │ (notifications.py)│
 └───────────────────┘ │ Approvals     │ └───────────────────┘
             │         └───────────────┘
+            ├─────────────────┐
+            ▼                 ▼
+┌───────────────────┐ ┌───────────────────┐
+│Executors          │ │Debate (debate/)   │
+│(executors/)       │ │ DebateOrchestrator│
+│ Claude, Codex     │ │ Prompts, Logs     │
+└───────────────────┘ └───────────────────┘
+            │                 │
+            ├─────────────────┘
             ▼
 ┌───────────────────┐ ┌───────────────┐ ┌───────────────────┐
-│Executors          │ │Git (git.py)   │ │Commands           │
-│(executors/)       │ │ Worktrees     │ │(commands.py)      │
-│ Claude, Codex     │ │ Branches      │ │ Language detection│
-└───────────────────┘ │ Commits       │ │ Test parsing      │
-                      └───────────────┘ └───────────────────┘
+│Git (git.py)       │ │Commands       │ │Config (config.py) │
+│ Worktrees         │ │(commands.py)  │ │ Pydantic models   │
+│ Branches, Commits │ │ Lang detection│ │ YAML loading      │
+└───────────────────┘ └───────────────┘ └───────────────────┘
             │
             ▼
 ┌─────────────────────────────────────────────────────────────┐
@@ -415,6 +504,7 @@ ruff format .
 - **`orchestrator.py`**: Manages phase transitions, checkpoints, approvals
 - **`phases.py`**: All 16 phase implementations
 - **`executors/`**: Agent CLI implementations (Claude, Codex)
+- **`debate/`**: Multi-agent debate system (orchestrator, prompts, transcripts)
 - **`context.py`**: Workflow state with cost tracking
 - **`config.py`**: Pydantic models for configuration
 - **`state.py`**: Checkpoint and approval persistence
