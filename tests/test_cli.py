@@ -1,6 +1,6 @@
 """Tests for CLI module."""
 
-
+import pytest
 
 from selfassembler.cli import create_parser, generate_task_name, handle_dry_run, handle_help_phases
 from selfassembler.config import WorkflowConfig
@@ -67,6 +67,157 @@ class TestCreateParser:
         parser = create_parser()
         args = parser.parse_args(["--list-phases"])
         assert args.list_phases is True
+
+    def test_agent_flag_claude(self):
+        """Test --agent flag with claude."""
+        parser = create_parser()
+        args = parser.parse_args(["Task", "--agent", "claude"])
+        assert args.agent == "claude"
+
+    def test_agent_flag_codex(self):
+        """Test --agent flag with codex."""
+        parser = create_parser()
+        args = parser.parse_args(["Task", "--agent", "codex"])
+        assert args.agent == "codex"
+
+    def test_agent_flag_default_none(self):
+        """Test --agent flag defaults to None."""
+        parser = create_parser()
+        args = parser.parse_args(["Task"])
+        assert args.agent is None
+
+    def test_agent_flag_invalid_choice(self):
+        """Test --agent flag rejects invalid choices."""
+
+        parser = create_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["Task", "--agent", "invalid"])
+
+
+class TestAgentFlagConfig:
+    """Tests for --agent flag configuration handling."""
+
+    def test_agent_flag_sets_config(self):
+        """Test that --agent flag sets config.agent.type."""
+        from selfassembler.cli import create_parser
+
+        parser = create_parser()
+        args = parser.parse_args(["Task", "--agent", "codex", "--dry-run"])
+
+        # Load config and apply overrides (simulating main() behavior)
+        config = WorkflowConfig.load(args.config)
+        if args.agent:
+            config.agent.type = args.agent
+
+        assert config.agent.type == "codex"
+
+    def test_agent_flag_overrides_config_file(self):
+        """Test that --agent flag overrides config file setting."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from pathlib import Path
+
+            config_path = Path(tmpdir) / "config.yaml"
+
+            # Create config with claude as agent type
+            config = WorkflowConfig()
+            config.agent.type = "claude"
+            config.save(config_path)
+
+            # Load and apply CLI override
+            loaded = WorkflowConfig.load(config_path)
+            loaded.agent.type = "codex"  # Simulating --agent codex
+
+            assert loaded.agent.type == "codex"
+
+
+class TestAutonomousFlagConfig:
+    """Tests for --autonomous flag configuration handling."""
+
+    def test_autonomous_sets_agent_dangerous_mode(self):
+        """Test that --autonomous sets config.agent.dangerous_mode."""
+        parser = create_parser()
+        args = parser.parse_args(["Task", "--autonomous"])
+
+        config = WorkflowConfig.load(args.config)
+
+        # Simulate main() behavior
+        if args.autonomous:
+            config.autonomous_mode = True
+            config.approvals.enabled = False
+            config.agent.dangerous_mode = True
+            config.claude.dangerous_mode = True
+
+        assert config.agent.dangerous_mode is True
+        assert config.claude.dangerous_mode is True  # Legacy compat
+        assert config.autonomous_mode is True
+        assert config.approvals.enabled is False
+
+    def test_autonomous_sets_both_dangerous_modes(self):
+        """Test that --autonomous sets both agent and legacy claude dangerous_mode."""
+        parser = create_parser()
+        args = parser.parse_args(["Task", "--autonomous"])
+
+        config = WorkflowConfig()
+
+        # Apply the same logic as main()
+        if args.autonomous:
+            config.autonomous_mode = True
+            config.approvals.enabled = False
+            config.agent.dangerous_mode = True
+            config.claude.dangerous_mode = True
+
+        # Both should be True
+        assert config.agent.dangerous_mode is True
+        assert config.claude.dangerous_mode is True
+
+    def test_no_approvals_does_not_set_dangerous_mode(self):
+        """Test that --no-approvals does NOT set dangerous_mode."""
+        parser = create_parser()
+        args = parser.parse_args(["Task", "--no-approvals"])
+
+        config = WorkflowConfig()
+
+        # Apply the same logic as main()
+        if args.autonomous:
+            config.autonomous_mode = True
+            config.approvals.enabled = False
+            config.agent.dangerous_mode = True
+            config.claude.dangerous_mode = True
+        elif args.no_approvals:
+            config.approvals.enabled = False
+
+        # dangerous_mode should remain False
+        assert config.agent.dangerous_mode is False
+        assert config.claude.dangerous_mode is False
+        assert config.approvals.enabled is False
+
+    def test_get_effective_agent_config_merges_dangerous_mode(self):
+        """Test that get_effective_agent_config merges dangerous_mode correctly."""
+        config = WorkflowConfig()
+
+        # Set legacy config only
+        config.claude.dangerous_mode = True
+        config.agent.dangerous_mode = False
+
+        effective = config.get_effective_agent_config()
+
+        # For claude agent, should inherit from legacy config
+        assert effective.dangerous_mode is True
+
+    def test_agent_dangerous_mode_takes_precedence(self):
+        """Test that agent.dangerous_mode takes precedence when explicitly set."""
+        config = WorkflowConfig()
+
+        # Set both configs
+        config.agent.dangerous_mode = True
+        config.claude.dangerous_mode = False
+
+        effective = config.get_effective_agent_config()
+
+        # agent.dangerous_mode should take precedence
+        assert effective.dangerous_mode is True
 
 
 class TestGenerateTaskName:

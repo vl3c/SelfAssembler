@@ -116,6 +116,11 @@ Examples:
         type=Path,
         help="Directory for plans and artifacts (default: ./plans)",
     )
+    config_group.add_argument(
+        "--agent",
+        choices=["claude", "codex"],
+        help="Agent CLI to use (default: claude)",
+    )
 
     # Utility commands
     util_group = parser.add_argument_group("utilities")
@@ -506,7 +511,8 @@ def main(args: list[str] | None = None) -> int:
     if parsed.autonomous:
         config.autonomous_mode = True
         config.approvals.enabled = False
-        config.claude.dangerous_mode = True
+        config.agent.dangerous_mode = True
+        config.claude.dangerous_mode = True  # Legacy compatibility
     elif parsed.no_approvals:
         config.approvals.enabled = False
 
@@ -527,6 +533,10 @@ def main(args: list[str] | None = None) -> int:
 
     if parsed.plans_dir:
         config.plans_dir = str(parsed.plans_dir)
+
+    # Apply agent selection
+    if parsed.agent:
+        config.agent.type = parsed.agent
 
     # Determine plans directory
     plans_dir = Path(config.plans_dir)

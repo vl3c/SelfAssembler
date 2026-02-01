@@ -17,7 +17,7 @@ from selfassembler.git import GitManager, copy_config_files
 if TYPE_CHECKING:
     from selfassembler.config import WorkflowConfig
     from selfassembler.context import WorkflowContext
-    from selfassembler.executor import ClaudeExecutor
+    from selfassembler.executors import AgentExecutor
 
 
 @dataclass
@@ -51,7 +51,7 @@ class Phase(ABC):
     def __init__(
         self,
         context: WorkflowContext,
-        executor: ClaudeExecutor,
+        executor: AgentExecutor,
         config: WorkflowConfig,
     ):
         self.context = context
@@ -73,7 +73,29 @@ class Phase(ABC):
 
     def _dangerous_mode(self) -> bool:
         """Return whether to skip permissions in autonomous mode."""
-        return self.config.autonomous_mode and self.config.claude.dangerous_mode
+        effective_config = self.config.get_effective_agent_config()
+        return self.config.autonomous_mode and effective_config.dangerous_mode
+
+    def _get_permission_mode(self) -> str | None:
+        """
+        Derive the permission mode for this phase.
+
+        - If claude_mode is explicitly set, use it (e.g., "plan" for read-only phases)
+        - If allowed_tools includes write operations (Write, Edit, Bash), use "acceptEdits"
+        - Otherwise, return None to let the executor use its default
+
+        This ensures write-heavy phases get writable sandbox access for agents
+        like Codex that default to read-only mode.
+        """
+        if self.claude_mode is not None:
+            return self.claude_mode
+
+        # Check if this phase needs write access
+        write_tools = {"Write", "Edit", "Bash"}
+        if self.allowed_tools and write_tools & set(self.allowed_tools):
+            return "acceptEdits"
+
+        return None
 
 
 class PreflightPhase(Phase):
@@ -84,7 +106,7 @@ class PreflightPhase(Phase):
 
     def run(self) -> PhaseResult:
         checks = [
-            self._check_claude_cli(),
+            self._check_agent_cli(),
             self._check_gh_cli(),
             self._check_git_clean(),
             self._check_git_updated(),
@@ -97,30 +119,28 @@ class PreflightPhase(Phase):
 
         return PhaseResult(success=True, artifacts={"checks": checks})
 
-    def _check_claude_cli(self) -> dict[str, Any]:
-        """Check if Claude CLI is installed."""
+    def _check_agent_cli(self) -> dict[str, Any]:
+        """Check if the configured agent CLI is installed."""
         try:
-            result = subprocess.run(
-                ["claude", "--version"],
-                capture_output=True,
-                text=True,
-                timeout=10,
+            is_available, version_or_error = self.executor.check_available()
+            agent_type = getattr(self.executor, "AGENT_TYPE", "unknown")
+            check_name = f"{agent_type}_cli"
+
+            if is_available:
+                return {"name": check_name, "passed": True, "version": version_or_error}
+
+            install_instructions = getattr(
+                self.executor,
+                "INSTALL_INSTRUCTIONS",
+                f"Install the {agent_type} CLI",
             )
-            if result.returncode == 0:
-                return {"name": "claude_cli", "passed": True, "version": result.stdout.strip()}
             return {
-                "name": "claude_cli",
+                "name": check_name,
                 "passed": False,
-                "message": "Claude CLI not working. Run: npm install -g @anthropic-ai/claude-code",
-            }
-        except FileNotFoundError:
-            return {
-                "name": "claude_cli",
-                "passed": False,
-                "message": "Claude CLI not installed. Run: npm install -g @anthropic-ai/claude-code",
+                "message": f"{agent_type.title()} CLI not working. {install_instructions}",
             }
         except Exception as e:
-            return {"name": "claude_cli", "passed": False, "message": str(e)}
+            return {"name": "agent_cli", "passed": False, "message": str(e)}
 
     def _check_gh_cli(self) -> dict[str, Any]:
         """Check if GitHub CLI is authenticated and configure git credentials."""
@@ -169,13 +189,48 @@ class PreflightPhase(Phase):
             return {"name": "git_clean", "passed": False, "message": str(e)}
 
     def _check_git_updated(self) -> dict[str, Any]:
-        """Check if local branch is up to date with remote."""
+        """Check if local branch is up to date with remote.
+
+        If auto_update is enabled, this will:
+        1. Checkout the base branch if not already on it
+        2. Pull latest changes if behind
+        """
         try:
             git = GitManager(self.context.repo_path)
             base_branch = self.config.git.base_branch
+            auto_update = self.config.git.auto_update
+
+            # First, check current branch and optionally checkout base branch
+            current_branch = git.get_current_branch()
+            if current_branch != base_branch and auto_update:
+                try:
+                    git.checkout(base_branch)
+                except Exception as e:
+                    return {
+                        "name": "git_updated",
+                        "passed": False,
+                        "message": f"Failed to checkout {base_branch}: {e}",
+                    }
+
+            # Check how far behind we are
             behind = git.commits_behind(base_branch)
+
+            # Auto-pull if behind and auto_update is enabled
+            if behind > 0 and auto_update:
+                try:
+                    git.pull()
+                    # Re-check after pulling
+                    behind = git.commits_behind(base_branch)
+                except Exception as e:
+                    return {
+                        "name": "git_updated",
+                        "passed": False,
+                        "message": f"Auto-pull failed: {e}. Manual intervention may be required.",
+                    }
+
             if behind == 0:
                 return {"name": "git_updated", "passed": True}
+
             return {
                 "name": "git_updated",
                 "passed": False,
@@ -273,7 +328,7 @@ Format the research as markdown with clear sections.
         phase_config = self.get_phase_config()
         result = self.executor.execute(
             prompt=prompt,
-            permission_mode=self.claude_mode,
+            permission_mode=self._get_permission_mode(),
             allowed_tools=self.allowed_tools,
             max_turns=phase_config.max_turns,
             timeout=phase_config.timeout,
@@ -346,7 +401,7 @@ Plan format:
         phase_config = self.get_phase_config()
         result = self.executor.execute(
             prompt=prompt,
-            permission_mode=self.claude_mode,
+            permission_mode=self._get_permission_mode(),
             allowed_tools=self.allowed_tools,
             max_turns=phase_config.max_turns,
             timeout=phase_config.timeout,
@@ -436,7 +491,7 @@ Be thorough but constructive. The goal is to improve the plan, not block it.
         phase_config = self.get_phase_config()
         result = self.executor.execute(
             prompt=prompt,
-            permission_mode=self.claude_mode,
+            permission_mode=self._get_permission_mode(),
             allowed_tools=self.allowed_tools,
             max_turns=phase_config.max_turns,
             timeout=phase_config.timeout,
@@ -491,6 +546,7 @@ Mark completed items in the plan file as you progress.
 
         result = self.executor.execute(
             prompt=prompt,
+            permission_mode=self._get_permission_mode(),
             allowed_tools=self.allowed_tools,
             max_turns=phase_config.max_turns,
             timeout=phase_config.timeout,
@@ -540,6 +596,7 @@ Do NOT run the tests yet (separate phase).
         phase_config = self.get_phase_config()
         result = self.executor.execute(
             prompt=prompt,
+            permission_mode=self._get_permission_mode(),
             allowed_tools=self.allowed_tools,
             max_turns=phase_config.max_turns,
             timeout=phase_config.timeout,
@@ -634,6 +691,7 @@ Report the final test results.
         phase_config = self.get_phase_config()
         result = self.executor.execute(
             prompt=prompt,
+            permission_mode=self._get_permission_mode(),
             allowed_tools=self.allowed_tools,
             max_turns=phase_config.max_turns,
             timeout=phase_config.timeout,
@@ -671,6 +729,7 @@ Do NOT run tests yet (I will run them after your fixes).
 """
         result = self.executor.execute(
             prompt=prompt,
+            permission_mode=self._get_permission_mode(),
             allowed_tools=["Read", "Edit", "Grep"],
             max_turns=15,
             dangerous_mode=self._dangerous_mode(),
@@ -739,7 +798,7 @@ If no issues found, note that the code looks good.
         phase_config = self.get_phase_config()
         result = self.executor.execute(
             prompt=prompt,
-            permission_mode=self.claude_mode,
+            permission_mode=self._get_permission_mode(),
             allowed_tools=self.allowed_tools,
             max_turns=phase_config.max_turns,
             timeout=phase_config.timeout,
@@ -789,6 +848,7 @@ Focus on fixing actual bugs and security issues first.
         phase_config = self.get_phase_config()
         result = self.executor.execute(
             prompt=prompt,
+            permission_mode=self._get_permission_mode(),
             allowed_tools=self.allowed_tools,
             max_turns=phase_config.max_turns,
             timeout=phase_config.timeout,
@@ -913,6 +973,7 @@ Make the minimal changes needed to fix the lint errors.
 """
         result = self.executor.execute(
             prompt=prompt,
+            permission_mode=self._get_permission_mode(),
             allowed_tools=["Read", "Edit"],
             max_turns=10,
             dangerous_mode=self._dangerous_mode(),
@@ -933,6 +994,7 @@ Add type annotations, fix type mismatches, or add type: ignore comments where ap
 """
         result = self.executor.execute(
             prompt=prompt,
+            permission_mode=self._get_permission_mode(),
             allowed_tools=["Read", "Edit"],
             max_turns=10,
             dangerous_mode=self._dangerous_mode(),
@@ -955,6 +1017,7 @@ Run with --fix flags where available. Report any unfixable issues.
 """
         result = self.executor.execute(
             prompt=prompt,
+            permission_mode=self._get_permission_mode(),
             allowed_tools=["Bash", "Read"],
             max_turns=10,
             dangerous_mode=self._dangerous_mode(),
@@ -1007,6 +1070,7 @@ Update documentation for: {self.context.task_description}
         phase_config = self.get_phase_config()
         result = self.executor.execute(
             prompt=prompt,
+            permission_mode=self._get_permission_mode(),
             allowed_tools=self.allowed_tools,
             max_turns=phase_config.max_turns,
             timeout=phase_config.timeout,
@@ -1093,6 +1157,7 @@ Types: feat, fix, docs, style, refactor, test, chore
         phase_config = self.get_phase_config()
         result = self.executor.execute(
             prompt=prompt,
+            permission_mode=self._get_permission_mode(),
             allowed_tools=self.allowed_tools,
             max_turns=phase_config.max_turns,
             timeout=phase_config.timeout,
@@ -1182,6 +1247,7 @@ If conflicts are too complex to resolve confidently, abort with `git rebase --ab
 """
         result = self.executor.execute(
             prompt=prompt,
+            permission_mode=self._get_permission_mode(),
             allowed_tools=self.allowed_tools,
             max_turns=20,
             dangerous_mode=self._dangerous_mode(),
@@ -1249,6 +1315,7 @@ Return the PR URL after creation.
             phase_config = self.get_phase_config()
             result = self.executor.execute(
                 prompt=prompt,
+                permission_mode=self._get_permission_mode(),
                 allowed_tools=self.allowed_tools,
                 max_turns=phase_config.max_turns,
                 timeout=phase_config.timeout,
@@ -1331,7 +1398,7 @@ Be critical but fair. Look for real issues, not style nitpicks.
         phase_config = self.get_phase_config()
         result = self.executor.execute(
             prompt=prompt,
-            permission_mode=self.claude_mode,
+            permission_mode=self._get_permission_mode(),
             allowed_tools=self.allowed_tools,
             max_turns=phase_config.max_turns,
             timeout=phase_config.timeout,

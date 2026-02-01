@@ -69,6 +69,29 @@ class GitManager:
         """Fetch from remote."""
         self._run(["fetch", remote])
 
+    def pull(self, remote: str = "origin", branch: str | None = None) -> None:
+        """
+        Pull latest changes from remote.
+
+        Args:
+            remote: Remote name (default: origin)
+            branch: Branch to pull (default: current branch)
+        """
+        args = ["pull", remote]
+        if branch:
+            args.append(branch)
+        self._run(args)
+
+    def checkout(self, branch: str, cwd: Path | None = None) -> None:
+        """
+        Checkout a branch.
+
+        Args:
+            branch: Branch name to checkout
+            cwd: Working directory (default: repo_path)
+        """
+        self._run(["checkout", branch], cwd=cwd)
+
     def get_current_branch(self, cwd: Path | None = None) -> str:
         """Get the current branch name."""
         result = self._run(["rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd)

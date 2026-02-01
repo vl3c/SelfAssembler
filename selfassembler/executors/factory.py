@@ -1,0 +1,113 @@
+"""Factory and registry for agent executors."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from selfassembler.executors.base import AgentExecutor, StreamEvent
+
+if TYPE_CHECKING:
+    pass
+
+
+# Registry of executor types
+EXECUTOR_REGISTRY: dict[str, type[AgentExecutor]] = {}
+
+
+def register_executor(agent_type: str, executor_class: type[AgentExecutor]) -> None:
+    """
+    Register an executor class for a given agent type.
+
+    Args:
+        agent_type: The agent type identifier (e.g., "claude", "codex")
+        executor_class: The executor class to register
+    """
+    EXECUTOR_REGISTRY[agent_type] = executor_class
+
+
+def get_executor_class(agent_type: str) -> type[AgentExecutor]:
+    """
+    Get the executor class for a given agent type.
+
+    Args:
+        agent_type: The agent type identifier
+
+    Returns:
+        The executor class
+
+    Raises:
+        ValueError: If the agent type is not registered
+    """
+    if agent_type not in EXECUTOR_REGISTRY:
+        available = ", ".join(EXECUTOR_REGISTRY.keys())
+        raise ValueError(f"Unknown agent type: '{agent_type}'. Available types: {available}")
+    return EXECUTOR_REGISTRY[agent_type]
+
+
+def create_executor(
+    agent_type: str,
+    working_dir: Path,
+    default_timeout: int = 600,
+    model: str | None = None,
+    stream: bool = True,
+    stream_callback: Callable[[StreamEvent], None] | None = None,
+    verbose: bool = True,
+    debug: str | None = None,
+    **kwargs,
+) -> AgentExecutor:
+    """
+    Create an executor instance for the given agent type.
+
+    Args:
+        agent_type: The agent type identifier (e.g., "claude", "codex")
+        working_dir: Working directory for the executor
+        default_timeout: Default timeout in seconds
+        model: Model to use (agent-specific)
+        stream: Whether to enable streaming
+        stream_callback: Callback for streaming events
+        verbose: Whether to enable verbose output
+        debug: Debug categories to enable
+        **kwargs: Additional arguments passed to the executor
+
+    Returns:
+        An instance of the appropriate executor class
+
+    Raises:
+        ValueError: If the agent type is not registered
+    """
+    executor_class = get_executor_class(agent_type)
+    return executor_class(
+        working_dir=working_dir,
+        default_timeout=default_timeout,
+        model=model,
+        stream=stream,
+        stream_callback=stream_callback,
+        verbose=verbose,
+        debug=debug,
+        **kwargs,
+    )
+
+
+def list_available_agents() -> list[str]:
+    """
+    List all registered agent types.
+
+    Returns:
+        List of agent type identifiers
+    """
+    return list(EXECUTOR_REGISTRY.keys())
+
+
+def _register_default_executors() -> None:
+    """Register the default executor implementations."""
+    from selfassembler.executors.claude import ClaudeExecutor
+    from selfassembler.executors.codex import CodexExecutor
+
+    register_executor("claude", ClaudeExecutor)
+    register_executor("codex", CodexExecutor)
+
+
+# Register default executors on module import
+_register_default_executors()
