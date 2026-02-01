@@ -50,6 +50,8 @@ class DebateOrchestrator:
         # Store agent names for dynamic role mapping
         self.primary_agent = config.primary_agent
         self.secondary_agent = config.secondary_agent
+        # Set during run_debate() to use phase-specific limits
+        self._max_turns: int = 50
 
     def run_debate(
         self,
@@ -58,6 +60,7 @@ class DebateOrchestrator:
         permission_mode: str | None = None,
         allowed_tools: list[str] | None = None,
         dangerous_mode: bool = False,
+        max_turns: int = 50,
     ) -> DebateResult:
         """
         Execute the full 3-turn debate.
@@ -72,6 +75,9 @@ class DebateOrchestrator:
         Returns:
             DebateResult with all turn results and final output
         """
+        # Store max_turns for use in internal methods
+        self._max_turns = max_turns
+
         self.files.ensure_directories()
 
         # Determine file paths using roles (not agent names) to support same-agent debates
@@ -197,7 +203,7 @@ class DebateOrchestrator:
                 prompt=primary_prompt,
                 permission_mode=permission_mode,
                 allowed_tools=allowed_tools,
-                max_turns=50,
+                max_turns=self._max_turns,
                 timeout=self.config.turn_timeout_seconds,
                 dangerous_mode=dangerous_mode,
                 working_dir=self.context.get_working_dir(),
@@ -208,7 +214,7 @@ class DebateOrchestrator:
                 prompt=secondary_prompt,
                 permission_mode=permission_mode,
                 allowed_tools=allowed_tools,
-                max_turns=50,
+                max_turns=self._max_turns,
                 timeout=self.config.turn_timeout_seconds,
                 dangerous_mode=secondary_dangerous_mode,
                 working_dir=self.context.get_working_dir(),
@@ -249,7 +255,7 @@ class DebateOrchestrator:
             prompt=primary_prompt,
             permission_mode=permission_mode,
             allowed_tools=allowed_tools,
-            max_turns=50,
+            max_turns=self._max_turns,
             timeout=self.config.turn_timeout_seconds,
             dangerous_mode=dangerous_mode,
             working_dir=self.context.get_working_dir(),
@@ -259,7 +265,7 @@ class DebateOrchestrator:
             prompt=secondary_prompt,
             permission_mode=permission_mode,
             allowed_tools=allowed_tools,
-            max_turns=50,
+            max_turns=self._max_turns,
             timeout=self.config.turn_timeout_seconds,
             dangerous_mode=secondary_dangerous_mode,
             working_dir=self.context.get_working_dir(),

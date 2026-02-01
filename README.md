@@ -335,7 +335,7 @@ debate:
   enabled: true              # Or use --debate / --no-debate CLI flags
   primary_agent: claude      # Primary agent (does synthesis)
   secondary_agent: codex     # Secondary agent (alternative perspective)
-  max_exchange_messages: 3   # Messages in Turn 2 (2-6, odd recommended)
+  max_exchange_messages: 3   # Messages in Turn 2 (must be odd: 3 or 5)
   parallel_turn_1: true      # Run Turn 1 in parallel
   phases:
     research: true

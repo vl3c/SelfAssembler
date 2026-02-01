@@ -64,8 +64,8 @@ class TestDebateConfig:
         # Valid values
         DebateConfig(max_turns=1)
         DebateConfig(max_turns=5)
-        DebateConfig(max_exchange_messages=2)
-        DebateConfig(max_exchange_messages=6)
+        DebateConfig(max_exchange_messages=3)  # Must be odd: 3 or 5
+        DebateConfig(max_exchange_messages=5)
 
         # Invalid values
         with pytest.raises(ValidationError):
@@ -73,9 +73,9 @@ class TestDebateConfig:
         with pytest.raises(ValidationError):
             DebateConfig(max_turns=6)
         with pytest.raises(ValidationError):
-            DebateConfig(max_exchange_messages=1)
+            DebateConfig(max_exchange_messages=2)  # Too low, must be >= 3
         with pytest.raises(ValidationError):
-            DebateConfig(max_exchange_messages=7)
+            DebateConfig(max_exchange_messages=6)  # Too high, must be <= 5
 
     def test_debate_config_save_load(self):
         """Test saving and loading debate configuration."""

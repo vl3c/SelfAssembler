@@ -199,7 +199,8 @@ class DebateConfig(BaseModel):
     turn_timeout_seconds: int = Field(default=300)
 
     # Message exchange settings (Turn 2)
-    max_exchange_messages: int = Field(default=3, ge=2, le=6)
+    # Must be odd so primary agent always closes the debate
+    max_exchange_messages: int = Field(default=3, ge=3, le=5)
     message_timeout_seconds: int = Field(default=180)
 
     # Output settings
