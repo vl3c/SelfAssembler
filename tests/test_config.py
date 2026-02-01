@@ -3,7 +3,14 @@
 import tempfile
 from pathlib import Path
 
-from selfassembler.config import RulesConfig, StreamingConfig, WorkflowConfig
+from selfassembler.config import (
+    AgentConfig,
+    ClaudeConfig,
+    GitConfig,
+    RulesConfig,
+    StreamingConfig,
+    WorkflowConfig,
+)
 
 
 class TestWorkflowConfig:
@@ -183,3 +190,254 @@ class TestRulesConfig:
             loaded = WorkflowConfig.load(config_path)
             assert loaded.rules.enabled_rules == ["no-emojis", "no-yapping"]
             assert loaded.rules.custom_rules == ["Custom rule here"]
+
+
+class TestAgentConfig:
+    """Tests for AgentConfig model."""
+
+    def test_default_config(self):
+        """Test AgentConfig defaults."""
+        config = AgentConfig()
+        assert config.type == "claude"
+        assert config.default_timeout == 600
+        assert config.max_turns_default == 50
+        assert config.dangerous_mode is False
+        assert config.model is None
+
+    def test_custom_values(self):
+        """Test AgentConfig with custom values."""
+        config = AgentConfig(
+            type="codex",
+            default_timeout=300,
+            max_turns_default=100,
+            dangerous_mode=True,
+            model="gpt-4",
+        )
+        assert config.type == "codex"
+        assert config.default_timeout == 300
+        assert config.max_turns_default == 100
+        assert config.dangerous_mode is True
+        assert config.model == "gpt-4"
+
+    def test_in_workflow_config(self):
+        """Test AgentConfig in WorkflowConfig."""
+        config = WorkflowConfig()
+        assert config.agent.type == "claude"
+        assert config.agent.default_timeout == 600
+
+    def test_agent_in_to_dict(self):
+        """Test agent config appears in to_dict output."""
+        config = WorkflowConfig()
+        data = config.to_dict()
+        assert "agent" in data
+        assert "type" in data["agent"]
+        assert data["agent"]["type"] == "claude"
+
+    def test_timeout_validation(self):
+        """Test timeout validation (min 60, max 7200)."""
+        import pytest
+        from pydantic import ValidationError
+
+        # Valid values
+        AgentConfig(default_timeout=60)
+        AgentConfig(default_timeout=7200)
+
+        # Invalid values
+        with pytest.raises(ValidationError):
+            AgentConfig(default_timeout=59)
+        with pytest.raises(ValidationError):
+            AgentConfig(default_timeout=7201)
+
+    def test_max_turns_validation(self):
+        """Test max_turns_default validation (min 1, max 500)."""
+        import pytest
+        from pydantic import ValidationError
+
+        # Valid values
+        AgentConfig(max_turns_default=1)
+        AgentConfig(max_turns_default=500)
+
+        # Invalid values
+        with pytest.raises(ValidationError):
+            AgentConfig(max_turns_default=0)
+        with pytest.raises(ValidationError):
+            AgentConfig(max_turns_default=501)
+
+
+class TestClaudeConfigBackwardCompatibility:
+    """Tests for backward compatibility with ClaudeConfig."""
+
+    def test_claude_config_exists(self):
+        """Test ClaudeConfig still exists."""
+        config = ClaudeConfig()
+        assert config.default_timeout == 600
+        assert config.max_turns_default == 50
+        assert config.dangerous_mode is False
+
+    def test_claude_config_in_workflow(self):
+        """Test ClaudeConfig is still in WorkflowConfig."""
+        config = WorkflowConfig()
+        assert hasattr(config, "claude")
+        assert isinstance(config.claude, ClaudeConfig)
+
+    def test_both_agent_and_claude_exist(self):
+        """Test both agent and claude configs exist in WorkflowConfig."""
+        config = WorkflowConfig()
+        assert hasattr(config, "agent")
+        assert hasattr(config, "claude")
+
+
+class TestGetEffectiveAgentConfig:
+    """Tests for get_effective_agent_config method."""
+
+    def test_default_returns_agent_config(self):
+        """Test default returns agent config values."""
+        config = WorkflowConfig()
+        effective = config.get_effective_agent_config()
+
+        assert effective.type == "claude"
+        assert effective.default_timeout == 600
+        assert effective.max_turns_default == 50
+
+    def test_merges_legacy_claude_config(self):
+        """Test legacy claude config is merged when using claude agent."""
+        config = WorkflowConfig()
+        config.claude.default_timeout = 900
+        config.claude.max_turns_default = 75
+        config.claude.dangerous_mode = True
+
+        effective = config.get_effective_agent_config()
+
+        # Legacy values should be merged
+        assert effective.default_timeout == 900
+        assert effective.max_turns_default == 75
+        assert effective.dangerous_mode is True
+
+    def test_agent_config_overrides_legacy(self):
+        """Test agent config values take precedence over legacy."""
+        config = WorkflowConfig()
+        # Set agent config to non-default values
+        config.agent.default_timeout = 1200
+        config.claude.default_timeout = 900
+
+        effective = config.get_effective_agent_config()
+
+        # Agent config should take precedence
+        assert effective.default_timeout == 1200
+
+    def test_codex_agent_ignores_legacy(self):
+        """Test codex agent doesn't merge legacy claude config."""
+        config = WorkflowConfig()
+        config.agent.type = "codex"
+        config.claude.default_timeout = 900
+
+        effective = config.get_effective_agent_config()
+
+        # Should use agent config defaults, not legacy
+        assert effective.type == "codex"
+        assert effective.default_timeout == 600  # Default, not 900
+
+    def test_returns_copy(self):
+        """Test returns a copy, not the original."""
+        config = WorkflowConfig()
+        effective1 = config.get_effective_agent_config()
+        effective2 = config.get_effective_agent_config()
+
+        effective1.default_timeout = 999
+
+        # Original should be unchanged
+        assert config.agent.default_timeout == 600
+        # Second call should return fresh copy
+        assert effective2.default_timeout == 600
+
+    def test_model_preserved(self):
+        """Test model value is preserved."""
+        config = WorkflowConfig()
+        config.agent.model = "opus"
+
+        effective = config.get_effective_agent_config()
+
+        assert effective.model == "opus"
+
+
+class TestGitConfig:
+    """Tests for GitConfig including new auto_update option."""
+
+    def test_default_config(self):
+        """Test GitConfig defaults."""
+        config = GitConfig()
+        assert config.base_branch == "main"
+        assert config.worktree_dir == "../.worktrees"
+        assert config.branch_prefix == "feature/"
+        assert config.cleanup_on_fail is False
+        assert config.cleanup_remote_on_fail is False
+        assert config.auto_update is True
+
+    def test_auto_update_in_workflow(self):
+        """Test auto_update is accessible in WorkflowConfig."""
+        config = WorkflowConfig()
+        assert config.git.auto_update is True
+
+    def test_auto_update_can_be_disabled(self):
+        """Test auto_update can be disabled."""
+        config = GitConfig(auto_update=False)
+        assert config.auto_update is False
+
+    def test_git_config_in_to_dict(self):
+        """Test git config appears in to_dict output."""
+        config = WorkflowConfig()
+        data = config.to_dict()
+        assert "git" in data
+        assert "auto_update" in data["git"]
+        assert data["git"]["auto_update"] is True
+
+    def test_save_and_load_git_config(self):
+        """Test saving and loading git configuration with auto_update."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "test_config.yaml"
+
+            # Create config with auto_update disabled
+            config = WorkflowConfig()
+            config.git.auto_update = False
+            config.git.base_branch = "master"
+            config.save(config_path)
+
+            # Load and verify
+            loaded = WorkflowConfig.load(config_path)
+            assert loaded.git.auto_update is False
+            assert loaded.git.base_branch == "master"
+
+
+class TestAgentConfigSaveLoad:
+    """Tests for saving and loading AgentConfig."""
+
+    def test_save_and_load_agent_config(self):
+        """Test saving and loading agent configuration."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "test_config.yaml"
+
+            # Create config with custom agent settings
+            config = WorkflowConfig()
+            config.agent.type = "codex"
+            config.agent.default_timeout = 300
+            config.agent.model = "gpt-4"
+            config.save(config_path)
+
+            # Load and verify
+            loaded = WorkflowConfig.load(config_path)
+            assert loaded.agent.type == "codex"
+            assert loaded.agent.default_timeout == 300
+            assert loaded.agent.model == "gpt-4"
+
+    def test_load_config_without_agent_section(self):
+        """Test loading config that doesn't have agent section uses defaults."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "test_config.yaml"
+
+            # Write config without agent section
+            config_path.write_text("budget_limit_usd: 20.0\n")
+
+            # Load and verify defaults are used
+            loaded = WorkflowConfig.load(config_path)
+            assert loaded.agent.type == "claude"
+            assert loaded.agent.default_timeout == 600

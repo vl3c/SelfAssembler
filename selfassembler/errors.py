@@ -71,13 +71,24 @@ class GitOperationError(SelfAssemblerError):
         self.returncode = returncode
 
 
-class ClaudeExecutionError(SelfAssemblerError):
-    """Raised when Claude CLI execution fails."""
+class AgentExecutionError(SelfAssemblerError):
+    """Raised when an agent CLI execution fails."""
 
-    def __init__(self, message: str, output: str = "", returncode: int = 1):
+    def __init__(
+        self,
+        message: str,
+        output: str = "",
+        returncode: int = 1,
+        agent_type: str = "unknown",
+    ):
         super().__init__(message)
         self.output = output
         self.returncode = returncode
+        self.agent_type = agent_type
+
+
+# Backward compatibility alias
+ClaudeExecutionError = AgentExecutionError
 
 
 class ContainerRequiredError(SelfAssemblerError):

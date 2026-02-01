@@ -5,7 +5,11 @@
 
 **Autonomous multi-phase workflow orchestrator for CLI coding agents.**
 
-SelfAssembler automates the complete software development lifecycle by orchestrating Claude Code through 16 distinct phases: environment validation, git worktree setup, research, planning, implementation, testing with fix loops, code review, documentation, commits, and PR creation with self-review.
+SelfAssembler automates the complete software development lifecycle by orchestrating CLI coding agents through 16 distinct phases: environment validation, git worktree setup, research, planning, implementation, testing with fix loops, code review, documentation, commits, and PR creation with self-review.
+
+Supports multiple agent backends:
+- **Claude Code** (default) - Anthropic's Claude Code CLI
+- **OpenAI Codex** - OpenAI's Codex CLI
 
 ## Table of Contents
 
@@ -53,10 +57,15 @@ pip install -e .
 ### Requirements
 
 - **Python 3.11+**
-- **[Claude Code CLI](https://github.com/anthropics/claude-code)**:
-  ```bash
-  npm install -g @anthropic-ai/claude-code
-  ```
+- **Agent CLI** (one of the following):
+  - **[Claude Code CLI](https://github.com/anthropics/claude-code)** (default):
+    ```bash
+    npm install -g @anthropic-ai/claude-code
+    ```
+  - **[OpenAI Codex CLI](https://github.com/openai/codex)**:
+    ```bash
+    npm install -g @openai/codex
+    ```
 - **[GitHub CLI](https://cli.github.com/)** (for PR creation):
   ```bash
   # macOS
@@ -99,6 +108,9 @@ selfassembler "Complex feature" --name feature --budget 25.0
 
 # Specify repository path
 selfassembler "Fix bug" --name bugfix --repo /path/to/project
+
+# Use OpenAI Codex instead of Claude Code
+selfassembler "Add feature" --name feature --agent codex
 ```
 
 ### Utility Commands
@@ -139,7 +151,7 @@ SelfAssembler executes 16 phases in sequence:
 
 | # | Phase | Description | Approval Gate |
 |---|-------|-------------|---------------|
-| 1 | **Preflight** | Validate environment (CLI tools, git state) | No |
+| 1 | **Preflight** | Validate environment, auto-pull latest changes | No |
 | 2 | **Setup** | Create git worktree and isolated workspace | No |
 | 3 | **Research** | Gather project context and conventions | No |
 | 4 | **Planning** | Create detailed implementation plan | **Yes** (default) |
@@ -167,12 +179,18 @@ budget_limit_usd: 15.0
 # Directory for plans and artifacts
 plans_dir: "./plans"
 
+# Agent settings (choose which CLI to use)
+agent:
+  type: "claude"  # or "codex" for OpenAI Codex CLI
+  model: null     # optional: override default model
+
 # Git settings
 git:
   base_branch: "main"
   branch_prefix: "feature/"
   worktree_dir: "../.worktrees"
   cleanup_on_fail: true
+  auto_update: true  # auto-pull and checkout base branch in preflight
 
 # Command overrides (null = auto-detect)
 commands:
@@ -378,15 +396,15 @@ ruff format .
             │         └───────────────┘
             ▼
 ┌───────────────────┐ ┌───────────────┐ ┌───────────────────┐
-│Executor           │ │Git (git.py)   │ │Commands           │
-│(executor.py)      │ │ Worktrees     │ │(commands.py)      │
-│ Claude CLI wrapper│ │ Branches      │ │ Language detection│
+│Executors          │ │Git (git.py)   │ │Commands           │
+│(executors/)       │ │ Worktrees     │ │(commands.py)      │
+│ Claude, Codex     │ │ Branches      │ │ Language detection│
 └───────────────────┘ │ Commits       │ │ Test parsing      │
                       └───────────────┘ └───────────────────┘
             │
             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                      Claude Code CLI                         │
+│               Agent CLI (Claude Code or Codex)              │
 │                   (external dependency)                      │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -396,7 +414,7 @@ ruff format .
 - **`cli.py`**: Command-line interface with argparse
 - **`orchestrator.py`**: Manages phase transitions, checkpoints, approvals
 - **`phases.py`**: All 16 phase implementations
-- **`executor.py`**: Wraps Claude CLI, parses JSON output
+- **`executors/`**: Agent CLI implementations (Claude, Codex)
 - **`context.py`**: Workflow state with cost tracking
 - **`config.py`**: Pydantic models for configuration
 - **`state.py`**: Checkpoint and approval persistence

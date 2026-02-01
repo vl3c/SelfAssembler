@@ -17,7 +17,7 @@ from selfassembler.git import GitManager, copy_config_files
 if TYPE_CHECKING:
     from selfassembler.config import WorkflowConfig
     from selfassembler.context import WorkflowContext
-    from selfassembler.executor import ClaudeExecutor
+    from selfassembler.executors import AgentExecutor
 
 
 @dataclass
@@ -51,7 +51,7 @@ class Phase(ABC):
     def __init__(
         self,
         context: WorkflowContext,
-        executor: ClaudeExecutor,
+        executor: AgentExecutor,
         config: WorkflowConfig,
     ):
         self.context = context
@@ -84,7 +84,7 @@ class PreflightPhase(Phase):
 
     def run(self) -> PhaseResult:
         checks = [
-            self._check_claude_cli(),
+            self._check_agent_cli(),
             self._check_gh_cli(),
             self._check_git_clean(),
             self._check_git_updated(),
@@ -97,30 +97,28 @@ class PreflightPhase(Phase):
 
         return PhaseResult(success=True, artifacts={"checks": checks})
 
-    def _check_claude_cli(self) -> dict[str, Any]:
-        """Check if Claude CLI is installed."""
+    def _check_agent_cli(self) -> dict[str, Any]:
+        """Check if the configured agent CLI is installed."""
         try:
-            result = subprocess.run(
-                ["claude", "--version"],
-                capture_output=True,
-                text=True,
-                timeout=10,
+            is_available, version_or_error = self.executor.check_available()
+            agent_type = getattr(self.executor, "AGENT_TYPE", "unknown")
+            check_name = f"{agent_type}_cli"
+
+            if is_available:
+                return {"name": check_name, "passed": True, "version": version_or_error}
+
+            install_instructions = getattr(
+                self.executor,
+                "INSTALL_INSTRUCTIONS",
+                f"Install the {agent_type} CLI",
             )
-            if result.returncode == 0:
-                return {"name": "claude_cli", "passed": True, "version": result.stdout.strip()}
             return {
-                "name": "claude_cli",
+                "name": check_name,
                 "passed": False,
-                "message": "Claude CLI not working. Run: npm install -g @anthropic-ai/claude-code",
-            }
-        except FileNotFoundError:
-            return {
-                "name": "claude_cli",
-                "passed": False,
-                "message": "Claude CLI not installed. Run: npm install -g @anthropic-ai/claude-code",
+                "message": f"{agent_type.title()} CLI not working. {install_instructions}",
             }
         except Exception as e:
-            return {"name": "claude_cli", "passed": False, "message": str(e)}
+            return {"name": "agent_cli", "passed": False, "message": str(e)}
 
     def _check_gh_cli(self) -> dict[str, Any]:
         """Check if GitHub CLI is authenticated and configure git credentials."""
@@ -169,13 +167,48 @@ class PreflightPhase(Phase):
             return {"name": "git_clean", "passed": False, "message": str(e)}
 
     def _check_git_updated(self) -> dict[str, Any]:
-        """Check if local branch is up to date with remote."""
+        """Check if local branch is up to date with remote.
+
+        If auto_update is enabled, this will:
+        1. Checkout the base branch if not already on it
+        2. Pull latest changes if behind
+        """
         try:
             git = GitManager(self.context.repo_path)
             base_branch = self.config.git.base_branch
+            auto_update = self.config.git.auto_update
+
+            # First, check current branch and optionally checkout base branch
+            current_branch = git.get_current_branch()
+            if current_branch != base_branch and auto_update:
+                try:
+                    git.checkout(base_branch)
+                except Exception as e:
+                    return {
+                        "name": "git_updated",
+                        "passed": False,
+                        "message": f"Failed to checkout {base_branch}: {e}",
+                    }
+
+            # Check how far behind we are
             behind = git.commits_behind(base_branch)
+
+            # Auto-pull if behind and auto_update is enabled
+            if behind > 0 and auto_update:
+                try:
+                    git.pull()
+                    # Re-check after pulling
+                    behind = git.commits_behind(base_branch)
+                except Exception as e:
+                    return {
+                        "name": "git_updated",
+                        "passed": False,
+                        "message": f"Auto-pull failed: {e}. Manual intervention may be required.",
+                    }
+
             if behind == 0:
                 return {"name": "git_updated", "passed": True}
+
             return {
                 "name": "git_updated",
                 "passed": False,

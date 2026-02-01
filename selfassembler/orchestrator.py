@@ -16,7 +16,8 @@ from selfassembler.errors import (
     ContainerRequiredError,
     PhaseFailedError,
 )
-from selfassembler.executor import ClaudeExecutor
+from selfassembler.executor import ClaudeExecutor  # Keep for backward compat type hints
+from selfassembler.executors import AgentExecutor, create_executor
 from selfassembler.git import GitManager
 from selfassembler.notifications import (
     Notifier,
@@ -130,7 +131,7 @@ class Orchestrator:
         self,
         context: WorkflowContext,
         config: WorkflowConfig,
-        executor: ClaudeExecutor | None = None,
+        executor: AgentExecutor | ClaudeExecutor | None = None,
         notifier: Notifier | None = None,
         checkpoint_manager: CheckpointManager | None = None,
     ):
@@ -168,15 +169,21 @@ class Orchestrator:
         if config.autonomous_mode:
             self._enforce_container_runtime()
 
-    def _create_executor(self, working_dir: Path) -> ClaudeExecutor:
-        """Create a new ClaudeExecutor for the given working directory."""
+    def _create_executor(self, working_dir: Path) -> AgentExecutor:
+        """Create a new agent executor for the given working directory."""
+        agent_config = self.config.get_effective_agent_config()
         self.logger.log(
             "executor_created",
-            data={"working_dir": str(working_dir)},
+            data={
+                "working_dir": str(working_dir),
+                "agent_type": agent_config.type,
+            },
         )
-        return ClaudeExecutor(
+        return create_executor(
+            agent_type=agent_config.type,
             working_dir=working_dir,
-            default_timeout=self.config.claude.default_timeout,
+            default_timeout=agent_config.default_timeout,
+            model=agent_config.model,
             stream=self.config.streaming.enabled,
             stream_callback=self._stream_callback,
             verbose=self.config.streaming.verbose,
