@@ -162,5 +162,8 @@ selfassembler.yaml
 .ruff_cache/
 
 # Claude Code local settings
-.claude/
+.claude/settings*.json
+
+# Allow skills to be tracked
+!.claude/skills/
 logs/
