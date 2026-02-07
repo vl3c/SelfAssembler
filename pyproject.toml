@@ -70,3 +70,6 @@ warn_unused_ignores = true
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
+markers = [
+    "integration: end-to-end tests using real git repos and subprocesses",
+]
