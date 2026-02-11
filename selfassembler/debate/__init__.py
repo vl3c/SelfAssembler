@@ -16,6 +16,7 @@ from selfassembler.debate.results import (
     Turn2Results,
 )
 from selfassembler.debate.transcript import DebateLog
+from selfassembler.debate.utils import display_name
 
 __all__ = [
     # Core orchestration
@@ -33,4 +34,6 @@ __all__ = [
     "PlanningDebatePrompts",
     "PlanReviewDebatePrompts",
     "CodeReviewDebatePrompts",
+    # Utilities
+    "display_name",
 ]

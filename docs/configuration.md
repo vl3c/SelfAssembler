@@ -246,6 +246,71 @@ notifications:
     webhook_url: null  # "https://hooks.slack.com/services/..."
 
 # =============================================================================
+# Multi-Agent Debate
+# =============================================================================
+
+# Optional multi-agent debate where a secondary agent reviews or debates
+# the primary agent's work on key phases.
+debate:
+  # Enable/disable debate system
+  enabled: false
+
+  # Agent roles
+  primary_agent: "claude"    # Does the main work and synthesis
+  secondary_agent: "codex"   # Reviews (feedback mode) or debates (debate mode)
+
+  # Debate mode - controls how agents interact:
+  #
+  #   "feedback" (default)
+  #       Primary generates -> Secondary reviews -> Primary incorporates feedback
+  #       Lightweight: adds ~50% cost per debate phase.
+  #
+  #   "debate"
+  #       Both generate independently -> exchange critiques -> Primary synthesizes
+  #       Primary opens and closes the exchange.
+  #       Thorough: adds ~100-150% cost per debate phase.
+  mode: "feedback"
+
+  # Debate intensity - only applies when mode is "debate":
+  #
+  #   "low" (default)
+  #       One exchange: primary critiques, secondary responds, primary closes.
+  #       3 messages total.
+  #
+  #   "high"
+  #       Two exchanges: adds another secondary response and primary close.
+  #       5 messages total.
+  intensity: "low"
+
+  # Run Turn 1 in parallel (debate mode only)
+  parallel_turn_1: true
+
+  # Timeout per agent for Turn 1 generation (seconds)
+  turn_timeout_seconds: 300
+
+  # Timeout per message in Turn 2 exchange (seconds)
+  message_timeout_seconds: 180
+
+  # Which phases use debate
+  phases:
+    research: true
+    planning: true
+    plan_review: true
+    code_review: true
+
+  # Keep intermediate files (per-agent outputs, transcripts)
+  keep_intermediate_files: true
+
+  # Subdirectory within plans_dir for debate transcripts
+  debate_subdir: "debates"
+
+  # Include attribution in synthesis (which agent contributed what)
+  include_attribution: true
+
+  # Max unresolved conflicts to include in synthesis
+  max_unresolved_conflicts: 5
+
+# =============================================================================
 # Rules / Guidelines
 # =============================================================================
 
@@ -422,4 +487,23 @@ agent:
 # Disable git auto-update if you prefer manual control
 git:
   auto_update: false
+```
+
+### Multi-Agent Debate (Feedback Mode)
+
+```yaml
+debate:
+  enabled: true
+  mode: feedback  # Secondary reviews primary's work (default)
+```
+
+### Multi-Agent Debate (Full Debate)
+
+```yaml
+debate:
+  enabled: true
+  mode: debate      # Both agents generate independently, then debate
+  intensity: low    # One exchange back and forth
+
+budget_limit_usd: 25.0  # Increase budget for higher cost
 ```

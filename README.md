@@ -32,7 +32,7 @@ Optionally enables **multi-agent debate** where Claude and Codex collaborate thr
 ## Features
 
 - **Multi-Phase Workflow**: Complete development lifecycle from preflight to PR self-review
-- **Multi-Agent Debate**: Optional Claude + Codex collaboration through structured 3-turn debates
+- **Multi-Agent Debate**: Optional Claude + Codex collaboration through feedback review or structured debates
 - **Cost Tracking**: Budget limits with per-phase cost monitoring and alerts
 - **Checkpoint Recovery**: Resume workflows from any phase after interruption
 - **Approval Gates**: Pause for human review at configurable points
@@ -228,7 +228,8 @@ debate:
   enabled: false
   primary_agent: claude
   secondary_agent: codex
-  max_exchange_messages: 3
+  mode: feedback       # "feedback" or "debate"
+  intensity: low       # "low" or "high" (debate mode only)
   phases:
     research: true
     planning: true
@@ -296,21 +297,37 @@ docker run --rm -it \
 
 ## Multi-Agent Debate
 
-SelfAssembler supports an optional **multi-agent debate mode** where Claude (primary) and Codex (secondary) collaborate through structured debates to produce higher-quality outputs.
+SelfAssembler supports an optional **multi-agent debate mode** where Claude (primary) and Codex (secondary) collaborate to produce higher-quality outputs. Two modes are available:
 
-### How It Works
+### Debate Modes
 
-The debate follows a 3-turn structure:
+#### Feedback Mode (`mode: feedback`, default)
+
+A lightweight review pass. The primary agent does the work, the secondary agent reviews it, and the primary agent incorporates the feedback.
+
+1. **Generate**: Primary agent produces its output
+2. **Feedback**: Secondary agent reviews and critiques the output
+3. **Synthesis**: Primary agent incorporates feedback into the final result
+
+Best for: most tasks. Adds a second perspective at minimal extra cost.
+
+#### Debate Mode (`mode: debate`)
+
+Both agents independently generate output, then argue back and forth before the primary agent synthesizes everything.
 
 1. **Turn 1 - Independent Generation**: Both agents work in parallel, producing independent analyses
-2. **Turn 2 - Debate Exchange**: Agents exchange 3 messages (Claude → Codex → Claude), critiquing and responding to each other's work
-3. **Turn 3 - Synthesis**: Claude synthesizes all outputs into a final result, incorporating the best from both agents
+2. **Turn 2 - Debate Exchange**: Agents exchange critiques. Primary always opens and closes.
+   - `intensity: low` - one exchange (3 messages: primary, secondary, primary)
+   - `intensity: high` - two exchanges (5 messages)
+3. **Turn 3 - Synthesis**: Primary agent synthesizes all outputs into a final result
+
+Best for: high-stakes tasks where independent perspectives and adversarial critique justify the extra cost.
 
 ### Debate-Enabled Phases
 
 | Phase | Rationale |
 |-------|-----------|
-| **Research** | Two agents find different information; synthesis catches gaps |
+| **Research** | A second agent catches gaps in research |
 | **Planning** | Alternative plans reveal different architectures and trade-offs |
 | **Plan Review** | Independent SWOT analyses from different perspectives |
 | **Code Review** | Two reviewers catch different issues |
@@ -332,11 +349,19 @@ selfassembler "Add feature" --no-debate
 
 ```yaml
 debate:
-  enabled: true              # Or use --debate / --no-debate CLI flags
-  primary_agent: claude      # Primary agent (does synthesis)
-  secondary_agent: codex     # Secondary agent (alternative perspective)
-  max_exchange_messages: 3   # Messages in Turn 2 (must be odd: 3 or 5)
-  parallel_turn_1: true      # Run Turn 1 in parallel
+  enabled: true
+  primary_agent: claude      # Primary agent (generates output, does synthesis)
+  secondary_agent: codex     # Secondary agent (reviews or provides alternative perspective)
+
+  # "feedback" - secondary reviews primary's work (default)
+  # "debate"   - both generate independently, then exchange critiques
+  mode: feedback
+
+  # Only applies when mode is "debate":
+  # "low"  - one exchange back and forth (3 messages)
+  # "high" - two exchanges back and forth (5 messages)
+  intensity: low
+
   phases:
     research: true
     planning: true
@@ -350,23 +375,25 @@ Debate mode produces additional files in your plans directory:
 
 ```
 plans/
-  # Agent-specific outputs (Turn 1)
-  research-{task}-claude.md
-  research-{task}-codex.md
+  # Primary agent output (always present)
+  research-{task}-primary.md
 
-  # Debate transcripts (Turn 2)
+  # Secondary agent output (full debate mode only)
+  research-{task}-secondary.md
+
+  # Debate/feedback transcript
   debates/
     research-{task}-debate.md
 
-  # Final synthesized output (Turn 3)
+  # Final synthesized output
   research-{task}.md
 ```
 
 ### Cost Considerations
 
-Debate mode increases costs approximately 2-2.5x per phase:
-- Claude: ~60% of cost (Turn 1 + Turn 2 messages + Synthesis)
-- Codex: ~40% of cost (Turn 1 + Turn 2 messages)
+- **Feedback mode**: ~1.5x cost per phase. Secondary only runs once (review), no independent generation.
+- **Debate mode** (low): ~2-2.5x cost per phase. Both agents generate independently, then one exchange.
+- **Debate mode** (high): ~2.5-3x cost per phase. Same as low with an additional exchange round.
 
 Consider increasing `budget_limit_usd` when using debate mode.
 

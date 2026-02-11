@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from selfassembler.debate.utils import display_name
+
 if TYPE_CHECKING:
     from selfassembler.debate.results import Turn1Results
 
@@ -28,9 +30,8 @@ class BaseDebatePromptGenerator(ABC):
         self.plans_dir = plans_dir
         self.primary_agent = primary_agent
         self.secondary_agent = secondary_agent
-        # Title-cased names for display in prompts
-        self.primary_name = primary_agent.title()
-        self.secondary_name = secondary_agent.title()
+        self.primary_name = display_name(primary_agent)
+        self.secondary_name = display_name(secondary_agent)
 
     # -------------------------------------------------------------------------
     # Turn 1: Independent Generation Prompts
@@ -45,6 +46,47 @@ class BaseDebatePromptGenerator(ABC):
     def turn1_secondary_prompt(self, output_file: Path) -> str:
         """Generate Turn 1 prompt for secondary agent (Codex)."""
         pass
+
+    # -------------------------------------------------------------------------
+    # Feedback Mode (mode="feedback")
+    # -------------------------------------------------------------------------
+
+    def feedback_prompt(
+        self,
+        reviewer: str,
+        primary_output: Path,
+    ) -> str:
+        """Generate prompt for secondary agent to review primary's output.
+
+        Used in feedback mode (mode='feedback').
+        """
+        reviewer_name = display_name(reviewer)
+        return f"""# Feedback Review: {self.phase_name} ({reviewer_name})
+
+## Context
+You are the SECONDARY agent ({reviewer_name}) reviewing the PRIMARY agent's ({self.primary_name}) work.
+
+## Primary Agent's Output
+Read the primary agent's output at: {primary_output}
+
+## Instructions
+Provide constructive feedback on the primary agent's work:
+
+### Strengths
+[What the primary agent did well]
+
+### Issues Found
+[Problems, gaps, or errors in the analysis - be specific with references]
+
+### Suggestions
+[Concrete improvements or additions to consider]
+
+### Missing Perspectives
+[Anything important that was overlooked]
+
+---
+NOTE: This is a feedback-only review. Your feedback will be used by the primary agent during synthesis.
+"""
 
     # -------------------------------------------------------------------------
     # Turn 2: Debate Exchange Prompts
@@ -251,6 +293,13 @@ NOTE: This is the final debate message. Synthesis will follow.
         primary_output = t1_results.get_output_file_by_role("primary")
         secondary_output = t1_results.get_output_file_by_role("secondary")
 
+        if secondary_output is None:
+            return self._feedback_synthesis_prompt(
+                primary_output=primary_output,
+                debate_transcript=debate_transcript,
+                final_output_file=final_output_file,
+            )
+
         return f"""# Synthesis: {self.phase_name} (Turn 3 of 3 - FINAL)
 
 You are synthesizing outputs from a multi-agent debate.
@@ -285,6 +334,40 @@ At the end, add:
 - **Open Questions**: Unresolved disagreements needing review
 
 Write your final synthesized output to: {final_output_file}
+"""
+
+    def _feedback_synthesis_prompt(
+        self,
+        primary_output: Path,
+        debate_transcript: str,
+        final_output_file: Path,
+    ) -> str:
+        """Generate synthesis prompt for feedback-only mode."""
+        return f"""# Synthesis: {self.phase_name} (Incorporating Feedback - FINAL)
+
+You are incorporating feedback from {self.secondary_name} into your original output.
+
+## Available Inputs
+1. Your original output ({self.primary_name}): {primary_output}
+2. Feedback from {self.secondary_name}:
+
+{debate_transcript}
+
+## Synthesis Criteria (Priority Order)
+1. **Address all issues**: Fix problems identified in feedback
+2. **Incorporate suggestions**: Adopt improvements where they strengthen the output
+3. **Preserve strengths**: Keep what was working well
+4. **Primary base**: Your original output is the foundation - refine, don't rewrite
+
+## Output Structure
+{self._get_output_structure()}
+
+### Feedback Notes
+At the end, add:
+- **Issues Addressed**: Feedback items you incorporated
+- **Issues Declined**: Feedback items you chose not to adopt (with reasoning)
+
+Write your final output to: {final_output_file}
 """
 
     @abstractmethod

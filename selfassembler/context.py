@@ -164,8 +164,9 @@ class WorkflowContext:
         """
         Get session to resume for synthesis (Turn 3).
 
-        This returns the session from Claude's final Turn 2 message,
-        allowing synthesis to carry the full debate context.
+        This returns the session from the primary agent's final Turn 2 message,
+        allowing synthesis to carry the full debate context. Falls back to
+        Turn 1 session for feedback-only mode.
 
         Args:
             phase: The phase name
@@ -173,15 +174,14 @@ class WorkflowContext:
         Returns:
             The session ID to resume, or None
         """
-        # Try to find Claude's last Turn 2 message session
-        # Check messages 3, 2, 1 (typical max is 3)
-        for msg_num in [3, 2, 1]:
-            session = self.get_debate_session_id(phase, "claude", 2, msg_num)
+        # Try to find primary agent's last Turn 2 message session (role-based)
+        for msg_num in [5, 4, 3, 2, 1]:
+            session = self.get_debate_session_id(phase, "primary", 2, msg_num)
             if session:
                 return session
 
-        # Fall back to Turn 1 session
-        return self.get_debate_session_id(phase, "claude", 1)
+        # Fall back to Turn 1 session (feedback-only mode or no T2 sessions)
+        return self.get_debate_session_id(phase, "primary", 1)
 
     def get_working_dir(self) -> Path:
         """Get the current working directory (worktree or repo)."""
