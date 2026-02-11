@@ -249,10 +249,17 @@ debate:
   primary_agent: "claude"     # Primary agent (does synthesis)
   secondary_agent: "codex"    # Secondary agent (provides alternatives)
 
-  # Debate structure
-  max_turns: 3                # Total turns (1-5)
-  max_exchange_messages: 3    # Messages in Turn 2 (2-6)
-  parallel_turn_1: true       # Run Turn 1 in parallel
+  # Debate mode:
+  #   "feedback" - secondary reviews primary's work (default)
+  #   "debate"   - both generate independently, then exchange critiques
+  mode: "feedback"
+
+  # Debate intensity (only applies when mode="debate"):
+  #   "low"  - one exchange back and forth (3 messages)
+  #   "high" - two exchanges back and forth (5 messages)
+  intensity: "low"
+
+  parallel_turn_1: true       # Run Turn 1 in parallel (debate mode only)
 
   # Timeouts
   turn_timeout_seconds: 300   # Timeout per turn

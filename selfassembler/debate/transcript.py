@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from selfassembler.debate.utils import display_name
+
 if TYPE_CHECKING:
     from selfassembler.debate.results import Turn1Results
 
@@ -25,7 +27,7 @@ class DebateMessage:
         """Format the message header for the transcript."""
         return (
             f"### [MESSAGE {self.message_number}/{total_messages}] "
-            f"{self.speaker.title()} - {self.timestamp.strftime('%H:%M:%S')}"
+            f"{display_name(self.speaker)} - {self.timestamp.strftime('%H:%M:%S')}"
         )
 
 
@@ -56,8 +58,8 @@ class DebateLog:
         """Initialize the debate log with header."""
         self._phase = phase
         self._task = task
-        primary_name = self.primary_agent.title()
-        secondary_name = self.secondary_agent.title()
+        primary_name = display_name(self.primary_agent)
+        secondary_name = display_name(self.secondary_agent)
         header = f"""# Debate Transcript: {phase}
 Task: {task}
 Date: {datetime.now().isoformat()}
@@ -70,9 +72,24 @@ Participants: {primary_name} (Primary), {secondary_name} (Secondary)
 
     def write_turn1_summary(self, t1_results: Turn1Results) -> None:
         """Write Turn 1 outputs summary section."""
-        primary_name = t1_results.primary_agent.title()
-        secondary_name = t1_results.secondary_agent.title()
-        summary = f"""
+        primary_name = display_name(t1_results.primary_agent)
+
+        if t1_results.secondary_output_file is None:
+            # Feedback-only mode: no secondary T1 output
+            summary = f"""
+## Turn 1 Output
+
+### {primary_name}'s Analysis
+[Link to: {t1_results.primary_output_file}]
+
+---
+
+## Feedback
+
+"""
+        else:
+            secondary_name = display_name(t1_results.secondary_agent)
+            summary = f"""
 ## Turn 1 Outputs
 
 ### {primary_name}'s Initial Analysis
@@ -164,9 +181,22 @@ Participants: {primary_name} (Primary), {secondary_name} (Secondary)
             "",
         ]
 
-        # Extract speakers
-        speakers = set(msg.speaker for msg in self.messages)
-        lines.append(f"**Participants:** {', '.join(s.title() for s in speakers)}\n")
+        # Always include both agents so feedback mode (where only the
+        # secondary speaks) still lists the primary.
+        participants: dict[str, str] = {
+            "primary": f"Primary ({display_name(self.primary_agent)})",
+            "secondary": f"Secondary ({display_name(self.secondary_agent)})",
+        }
+        # Override with message-derived info when roles differ from defaults
+        for msg in self.messages:
+            key = msg.role or msg.speaker
+            if key not in participants:
+                name = display_name(msg.speaker)
+                if msg.role:
+                    participants[key] = f"{msg.role.title()} ({name})"
+                else:
+                    participants[key] = name
+        lines.append(f"**Participants:** {', '.join(participants.values())}\n")
         lines.append("")
 
         # Note about unresolved items
@@ -207,21 +237,18 @@ Participants: {primary_name} (Primary), {secondary_name} (Secondary)
         # Fallback to agent name for backward compatibility
         return self.get_agent_messages(self.secondary_agent)
 
-    # Backward compatibility
-    def get_claude_messages(self) -> list[DebateMessage]:
-        """Get all messages from Claude (backward compatible)."""
-        return [m for m in self.messages if m.speaker == "claude"]
-
-    def get_codex_messages(self) -> list[DebateMessage]:
-        """Get all messages from Codex (backward compatible)."""
-        return [m for m in self.messages if m.speaker == "codex"]
-
     def get_final_positions(self) -> dict[str, str]:
-        """Get the final message content from each speaker."""
+        """Get the final message content from each participant.
+
+        Keys by role (``msg.role``) when available, falling back to
+        ``msg.speaker`` for backward compatibility. This avoids collisions
+        when both agents have the same name.
+        """
         positions = {}
         for msg in reversed(self.messages):
-            if msg.speaker not in positions:
-                positions[msg.speaker] = msg.content
+            key = msg.role or msg.speaker
+            if key not in positions:
+                positions[key] = msg.content
             if len(positions) == 2:
                 break
         return positions

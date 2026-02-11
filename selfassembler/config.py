@@ -185,7 +185,6 @@ class DebateConfig(BaseModel):
     """Configuration for multi-agent debate system."""
 
     enabled: bool = Field(default=False)
-    max_turns: int = Field(default=3, ge=1, le=5)
 
     # Agent roles
     primary_agent: str = Field(default="claude")
@@ -194,25 +193,53 @@ class DebateConfig(BaseModel):
     # Phases with debate enabled
     phases: DebatePhasesConfig = Field(default_factory=DebatePhasesConfig)
 
+    # Debate mode:
+    #   "feedback" - primary generates, secondary reviews, primary incorporates feedback
+    #   "debate"   - both generate independently, then exchange critiques, primary synthesizes
+    mode: str = Field(default="feedback")
+
+    # Debate intensity (only applies when mode="debate"):
+    #   "low"  - one exchange: primary critiques → secondary responds → primary closes
+    #   "high" - two exchanges: adds another secondary response and primary close
+    intensity: str = Field(default="low")
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, v: str) -> str:
+        """Ensure mode is 'feedback' or 'debate'."""
+        if v not in ("feedback", "debate"):
+            raise ValueError(f"mode must be 'feedback' or 'debate' (got '{v}')")
+        return v
+
+    @field_validator("intensity")
+    @classmethod
+    def validate_intensity(cls, v: str) -> str:
+        """Ensure intensity is 'low' or 'high'."""
+        if v not in ("low", "high"):
+            raise ValueError(f"intensity must be 'low' or 'high' (got '{v}')")
+        return v
+
     # Execution settings
     parallel_turn_1: bool = Field(default=True)
     turn_timeout_seconds: int = Field(default=300)
-
-    # Message exchange settings (Turn 2)
-    # Must be odd so primary agent always closes the debate
-    max_exchange_messages: int = Field(default=3, ge=3, le=5)
     message_timeout_seconds: int = Field(default=180)
 
-    @field_validator("max_exchange_messages")
-    @classmethod
-    def validate_odd_messages(cls, v: int) -> int:
-        """Ensure max_exchange_messages is odd so primary agent closes the debate."""
-        if v % 2 == 0:
-            raise ValueError(
-                f"max_exchange_messages must be odd (got {v}). "
-                "Primary agent must close the debate for proper synthesis."
-            )
-        return v
+    @property
+    def is_feedback_only(self) -> bool:
+        """Whether debate uses feedback-only mode."""
+        return self.mode == "feedback"
+
+    @property
+    def max_exchange_messages(self) -> int:
+        """Compute the number of Turn 2 messages from mode and intensity.
+
+        feedback       → 1 (secondary reviews primary's output)
+        debate + low   → 3 (primary → secondary → primary)
+        debate + high  → 5 (primary → secondary → primary → secondary → primary)
+        """
+        if self.mode == "feedback":
+            return 1
+        return 3 if self.intensity == "low" else 5
 
     # Output settings
     keep_intermediate_files: bool = Field(default=True)

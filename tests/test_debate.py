@@ -35,11 +35,12 @@ class TestDebateConfig:
         """Test DebateConfig defaults."""
         config = DebateConfig()
         assert config.enabled is False
-        assert config.max_turns == 3
         assert config.primary_agent == "claude"
         assert config.secondary_agent == "codex"
+        assert config.mode == "feedback"
+        assert config.intensity == "low"
         assert config.parallel_turn_1 is True
-        assert config.max_exchange_messages == 3
+        assert config.max_exchange_messages == 1  # computed from mode
         assert config.keep_intermediate_files is True
 
     def test_phases_config(self):
@@ -61,28 +62,33 @@ class TestDebateConfig:
         """Test DebateConfig validation."""
         from pydantic import ValidationError
 
-        # Valid values (max_exchange_messages must be odd, 3-5)
-        DebateConfig(max_turns=1)
-        DebateConfig(max_turns=5)
-        DebateConfig(max_exchange_messages=3)
-        DebateConfig(max_exchange_messages=5)
+        # Valid mode/intensity combinations
+        DebateConfig(mode="feedback")
+        DebateConfig(mode="debate", intensity="low")
+        DebateConfig(mode="debate", intensity="high")
 
         # Invalid values
         with pytest.raises(ValidationError):
-            DebateConfig(max_turns=0)
+            DebateConfig(mode="invalid")
         with pytest.raises(ValidationError):
-            DebateConfig(max_turns=6)
-        # max_exchange_messages must be >= 3
-        with pytest.raises(ValidationError):
-            DebateConfig(max_exchange_messages=2)
-        # max_exchange_messages must be <= 5
-        with pytest.raises(ValidationError):
-            DebateConfig(max_exchange_messages=6)
-        with pytest.raises(ValidationError):
-            DebateConfig(max_exchange_messages=7)
-        # max_exchange_messages must be odd
-        with pytest.raises(ValidationError):
-            DebateConfig(max_exchange_messages=4)
+            DebateConfig(intensity="medium")
+
+    def test_mode_and_intensity(self):
+        """Test mode/intensity map to correct max_exchange_messages."""
+        # Feedback mode
+        config = DebateConfig(mode="feedback")
+        assert config.is_feedback_only is True
+        assert config.max_exchange_messages == 1
+
+        # Debate low
+        config = DebateConfig(mode="debate", intensity="low")
+        assert config.is_feedback_only is False
+        assert config.max_exchange_messages == 3
+
+        # Debate high
+        config = DebateConfig(mode="debate", intensity="high")
+        assert config.is_feedback_only is False
+        assert config.max_exchange_messages == 5
 
     def test_debate_config_save_load(self):
         """Test saving and loading debate configuration."""
@@ -92,13 +98,16 @@ class TestDebateConfig:
             # Create config with debate enabled
             config = WorkflowConfig()
             config.debate.enabled = True
-            config.debate.max_exchange_messages = 5
+            config.debate.mode = "debate"
+            config.debate.intensity = "high"
             config.debate.phases.research = False
             config.save(config_path)
 
             # Load and verify
             loaded = WorkflowConfig.load(config_path)
             assert loaded.debate.enabled is True
+            assert loaded.debate.mode == "debate"
+            assert loaded.debate.intensity == "high"
             assert loaded.debate.max_exchange_messages == 5
             assert loaded.debate.phases.research is False
 
@@ -200,8 +209,8 @@ class TestDebateLog:
             log.append_message("codex", 2, "Codex msg")
             log.append_message("claude", 3, "Claude msg 2")
 
-            claude_msgs = log.get_claude_messages()
-            codex_msgs = log.get_codex_messages()
+            claude_msgs = log.get_agent_messages("claude")
+            codex_msgs = log.get_agent_messages("codex")
 
             assert len(claude_msgs) == 2
             assert len(codex_msgs) == 1
@@ -298,6 +307,7 @@ class TestTurn2Results:
             speaker="claude",
             message_number=1,
             content="Message 1",
+            role="primary",
             result=ExecutionResult(
                 session_id="s1",
                 output="m1",
@@ -312,6 +322,7 @@ class TestTurn2Results:
             speaker="codex",
             message_number=2,
             content="Message 2",
+            role="secondary",
             result=ExecutionResult(
                 session_id="s2",
                 output="m2",
@@ -327,8 +338,8 @@ class TestTurn2Results:
 
         assert result.message_count == 2
         assert result.total_cost == 0.35
-        assert len(result.get_claude_messages()) == 1
-        assert len(result.get_codex_messages()) == 1
+        assert len(result.get_agent_messages("claude")) == 1
+        assert len(result.get_agent_messages("codex")) == 1
 
 
 class TestDebateResult:
@@ -383,10 +394,10 @@ class TestDebateResult:
             synthesis=synthesis,
         )
 
-        # Claude cost: Turn 1 (0.5) + Synthesis (0.4) = 0.9
-        assert abs(result.claude_cost - 0.9) < 0.001
-        # Codex cost: Turn 1 (0.3) = 0.3
-        assert abs(result.codex_cost - 0.3) < 0.001
+        # Primary cost: Turn 1 (0.5) + Synthesis (0.4) = 0.9
+        assert abs(result.primary_cost - 0.9) < 0.001
+        # Secondary cost: Turn 1 (0.3) = 0.3
+        assert abs(result.secondary_cost - 0.3) < 0.001
         # Total: 0.5 + 0.3 + 0.4 = 1.2
         assert abs(result.total_cost - 1.2) < 0.001
 
@@ -520,11 +531,11 @@ class TestWorkflowContextDebateSessions:
             plans_dir=Path("/tmp/plans"),
         )
 
-        # Set Claude's Turn 2 messages
-        context.set_debate_session_id("research", "claude", 2, "msg1-session", message_num=1)
-        context.set_debate_session_id("research", "claude", 2, "msg3-session", message_num=3)
+        # Set primary agent's Turn 2 messages (role-based keys)
+        context.set_debate_session_id("research", "primary", 2, "msg1-session", message_num=1)
+        context.set_debate_session_id("research", "primary", 2, "msg3-session", message_num=3)
 
-        # Should return most recent Claude session
+        # Should return most recent primary session
         assert context.get_synthesis_resume_session("research") == "msg3-session"
 
     def test_synthesis_fallback_to_turn1(self):
@@ -536,8 +547,8 @@ class TestWorkflowContextDebateSessions:
             plans_dir=Path("/tmp/plans"),
         )
 
-        # Only set Turn 1 session
-        context.set_debate_session_id("research", "claude", 1, "t1-session")
+        # Only set Turn 1 session (role-based key)
+        context.set_debate_session_id("research", "primary", 1, "t1-session")
 
         # Should fall back to Turn 1
         assert context.get_synthesis_resume_session("research") == "t1-session"
@@ -715,8 +726,8 @@ class TestSameAgentDebate:
             secondary_agent="codex",  # Same agent
         )
 
-        # All messages are from "codex", so get_codex_messages returns all
-        assert len(result.get_codex_messages()) == 2
+        # All messages are from "codex", so get_agent_messages returns all
+        assert len(result.get_agent_messages("codex")) == 2
         # But we can distinguish by role
         assert len(result.get_primary_messages()) == 1
         assert len(result.get_secondary_messages()) == 1
@@ -888,3 +899,304 @@ class TestSameAgentDebate:
                 role="secondary",  # Explicit role
             )
             assert "SECONDARY agent" in prompt_secondary
+
+    def test_same_agent_session_ids_no_collision(self):
+        """get_session_ids() should produce distinct keys when primary == secondary."""
+        turn1 = Turn1Results(
+            primary_result=ExecutionResult(
+                session_id="sess-p",
+                output="out",
+                cost_usd=0.1,
+                duration_ms=100,
+                num_turns=1,
+                is_error=False,
+                raw_output="{}",
+            ),
+            secondary_result=ExecutionResult(
+                session_id="sess-s",
+                output="out",
+                cost_usd=0.1,
+                duration_ms=100,
+                num_turns=1,
+                is_error=False,
+                raw_output="{}",
+            ),
+            primary_output_file=Path("/tmp/p.md"),
+            secondary_output_file=Path("/tmp/s.md"),
+            primary_agent="claude",
+            secondary_agent="claude",
+        )
+
+        result = DebateResult(
+            success=True,
+            phase_name="research",
+            final_output_file=Path("/tmp/final.md"),
+            turn1=turn1,
+            turn2=Turn2Results(messages=[]),
+        )
+
+        sessions = result.get_session_ids()
+        assert sessions["turn1_primary"] == "sess-p"
+        assert sessions["turn1_secondary"] == "sess-s"
+        assert len(sessions) == 2  # Both preserved, no overwrite
+
+    def test_same_agent_artifacts_no_collision(self):
+        """to_phase_result_artifacts() should produce distinct keys when primary == secondary."""
+        turn1 = Turn1Results(
+            primary_result=ExecutionResult(
+                session_id="sess-p",
+                output="out",
+                cost_usd=0.1,
+                duration_ms=100,
+                num_turns=1,
+                is_error=False,
+                raw_output="{}",
+            ),
+            secondary_result=ExecutionResult(
+                session_id="sess-s",
+                output="out",
+                cost_usd=0.1,
+                duration_ms=100,
+                num_turns=1,
+                is_error=False,
+                raw_output="{}",
+            ),
+            primary_output_file=Path("/tmp/p.md"),
+            secondary_output_file=Path("/tmp/s.md"),
+            primary_agent="claude",
+            secondary_agent="claude",
+        )
+
+        result = DebateResult(
+            success=True,
+            phase_name="research",
+            final_output_file=Path("/tmp/final.md"),
+            turn1=turn1,
+            turn2=Turn2Results(messages=[]),
+        )
+
+        artifacts = result.to_phase_result_artifacts()
+        assert artifacts["primary_t1_file"] == "/tmp/p.md"
+        assert artifacts["secondary_t1_file"] == "/tmp/s.md"
+        assert artifacts["primary_agent"] == "claude"
+        assert artifacts["secondary_agent"] == "claude"
+
+    def test_same_agent_final_positions_no_collision(self):
+        """get_final_positions() should return both positions in same-agent debates."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "debate.md"
+            log = DebateLog(log_path, total_messages=2, primary_agent="claude", secondary_agent="claude")
+            log.write_header("research", "test")
+            log.append_message("claude", 1, "Primary position", role="primary")
+            log.append_message("claude", 2, "Secondary position", role="secondary")
+
+            positions = log.get_final_positions()
+            assert len(positions) == 2
+            assert positions["primary"] == "Primary position"
+            assert positions["secondary"] == "Secondary position"
+
+
+class TestDisplayName:
+    """Tests for display_name utility."""
+
+    def test_known_agents(self):
+        from selfassembler.debate import display_name
+
+        assert display_name("claude") == "Claude"
+        assert display_name("codex") == "Codex"
+        assert display_name("gpt-4o") == "GPT-4o"
+
+    def test_unknown_agent_fallback(self):
+        from selfassembler.debate import display_name
+
+        assert display_name("my-custom-agent") == "My Custom Agent"
+
+
+class TestFeedbackOnlyMode:
+    """Tests for feedback debate mode (mode='feedback')."""
+
+    def test_turn1_results_without_secondary(self):
+        """Test Turn1Results with None secondary fields."""
+        result = Turn1Results(
+            primary_result=ExecutionResult(
+                session_id="s1",
+                output="primary output",
+                cost_usd=0.5,
+                duration_ms=1000,
+                num_turns=5,
+                is_error=False,
+                raw_output="{}",
+            ),
+            secondary_result=None,
+            primary_output_file=Path("/tmp/primary.md"),
+            secondary_output_file=None,
+            primary_agent="claude",
+            secondary_agent="codex",
+        )
+
+        assert result.total_cost == 0.5
+        assert result.secondary_result is None
+        assert result.secondary_output_file is None
+        assert result.get_output_file_by_role("primary") == Path("/tmp/primary.md")
+        assert result.get_output_file_by_role("secondary") is None
+
+    def test_feedback_prompt_generation(self):
+        """Test feedback prompt for secondary reviewing primary's work."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plans_dir = Path(tmpdir)
+
+            generator = ResearchDebatePrompts(
+                task_description="Implement feature X",
+                task_name="feature-x",
+                plans_dir=plans_dir,
+            )
+
+            prompt = generator.feedback_prompt(
+                reviewer="codex",
+                primary_output=plans_dir / "research-primary.md",
+            )
+
+            assert "SECONDARY agent" in prompt
+            assert "Codex" in prompt
+            assert "feedback" in prompt.lower()
+            assert "Strengths" in prompt
+            assert "Issues Found" in prompt
+            assert "Suggestions" in prompt
+
+    def test_feedback_synthesis_prompt(self):
+        """Test synthesis prompt in feedback-only mode."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plans_dir = Path(tmpdir)
+
+            generator = ResearchDebatePrompts(
+                task_description="Implement feature X",
+                task_name="feature-x",
+                plans_dir=plans_dir,
+            )
+
+            t1_results = Turn1Results(
+                primary_result=ExecutionResult(
+                    session_id="s1",
+                    output="out",
+                    cost_usd=0.5,
+                    duration_ms=1000,
+                    num_turns=5,
+                    is_error=False,
+                    raw_output="{}",
+                ),
+                secondary_result=None,
+                primary_output_file=Path("/tmp/primary.md"),
+                secondary_output_file=None,
+            )
+
+            prompt = generator.synthesis_prompt(
+                t1_results=t1_results,
+                debate_transcript="Some feedback here",
+                final_output_file=Path("/tmp/final.md"),
+            )
+
+            assert "Incorporating Feedback" in prompt
+            assert "Issues Addressed" in prompt
+            assert "Issues Declined" in prompt
+            # Should NOT reference a secondary T1 output file
+            assert "None" not in prompt
+
+    def test_debate_log_primary_only_turn1(self):
+        """Test DebateLog writes correctly with no secondary T1 output."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "debate.md"
+
+            log = DebateLog(log_path)
+            log.write_header("research", "Test task")
+
+            t1_results = Turn1Results(
+                primary_result=ExecutionResult(
+                    session_id="s1",
+                    output="out",
+                    cost_usd=0.5,
+                    duration_ms=1000,
+                    num_turns=5,
+                    is_error=False,
+                    raw_output="{}",
+                ),
+                secondary_result=None,
+                primary_output_file=Path("/tmp/primary.md"),
+                secondary_output_file=None,
+            )
+
+            log.write_turn1_summary(t1_results)
+
+            content = log_path.read_text()
+            assert "Turn 1 Output" in content
+            assert "Feedback" in content
+            # Should not mention secondary analysis
+            assert "Secondary" not in content or "Initial Analysis" not in content
+
+    def test_debate_result_cost_without_secondary_t1(self):
+        """Test cost calculation when secondary didn't generate in Turn 1."""
+        turn1 = Turn1Results(
+            primary_result=ExecutionResult(
+                session_id="s1",
+                output="out",
+                cost_usd=0.5,
+                duration_ms=1000,
+                num_turns=5,
+                is_error=False,
+                raw_output="{}",
+            ),
+            secondary_result=None,
+            primary_output_file=Path("/tmp/primary.md"),
+            secondary_output_file=None,
+            primary_agent="claude",
+            secondary_agent="codex",
+        )
+
+        # Secondary has a feedback message in Turn 2
+        feedback_msg = DebateMessage(
+            speaker="codex",
+            message_number=1,
+            content="Feedback",
+            role="secondary",
+            result=ExecutionResult(
+                session_id="s2",
+                output="feedback",
+                cost_usd=0.2,
+                duration_ms=500,
+                num_turns=2,
+                is_error=False,
+                raw_output="{}",
+            ),
+        )
+
+        synthesis = SynthesisResult(
+            result=ExecutionResult(
+                session_id="synth",
+                output="synthesis",
+                cost_usd=0.4,
+                duration_ms=600,
+                num_turns=4,
+                is_error=False,
+                raw_output="{}",
+            ),
+            output_file=Path("/tmp/final.md"),
+        )
+
+        result = DebateResult(
+            success=True,
+            phase_name="research",
+            final_output_file=Path("/tmp/final.md"),
+            turn1=turn1,
+            turn2=Turn2Results(
+                messages=[feedback_msg],
+                primary_agent="claude",
+                secondary_agent="codex",
+            ),
+            synthesis=synthesis,
+        )
+
+        # Primary cost: T1 (0.5) + Synthesis (0.4) = 0.9
+        assert abs(result.primary_cost - 0.9) < 0.001
+        # Secondary cost: T2 feedback (0.2), no T1
+        assert abs(result.secondary_cost - 0.2) < 0.001
+        # Total: 0.5 + 0.2 + 0.4 = 1.1
+        assert abs(result.total_cost - 1.1) < 0.001

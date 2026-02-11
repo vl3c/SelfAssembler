@@ -151,6 +151,29 @@ notifications:
     enabled: false
     webhook_url: null  # Slack incoming webhook URL
 
+# Multi-agent debate settings (optional)
+# When enabled, a secondary agent reviews or debates the primary agent's work
+# on key phases (research, planning, plan review, code review).
+debate:
+  enabled: false
+  primary_agent: claude      # Does the main work and synthesis
+  secondary_agent: codex     # Reviews or provides alternative perspective
+
+  # "feedback" - secondary reviews primary's work (default)
+  # "debate"   - both generate independently, then exchange critiques
+  mode: feedback
+
+  # Only applies when mode is "debate":
+  # "low"  - one exchange back and forth (3 messages)
+  # "high" - two exchanges back and forth (5 messages)
+  intensity: low
+
+  phases:
+    research: true
+    planning: true
+    plan_review: true
+    code_review: true
+
 # Files to copy to worktree (glob patterns)
 copy_files:
   - ".env"

@@ -28,10 +28,9 @@ class DebateOrchestrator:
     """
     Orchestrates multi-agent debate within a phase.
 
-    Manages the three-turn debate process:
-    - Turn 1: Parallel independent generation
-    - Turn 2: Interactive message exchange
-    - Turn 3: Synthesis by primary agent
+    Supports two modes:
+    - **Feedback** (default): Primary generates → Secondary reviews → Primary synthesizes
+    - **Debate**: Both generate independently → Exchange critiques → Primary synthesizes
     """
 
     def __init__(
@@ -88,7 +87,19 @@ class DebateOrchestrator:
         final_file = self.files.get_final_output_path(phase_file_name)
 
         try:
-            # Turn 1: Parallel independent generation
+            if self.config.is_feedback_only:
+                return self._run_feedback_debate(
+                    phase_name=phase_name,
+                    prompt_generator=prompt_generator,
+                    primary_t1_file=primary_t1_file,
+                    debate_file=debate_file,
+                    final_file=final_file,
+                    permission_mode=permission_mode,
+                    allowed_tools=allowed_tools,
+                    dangerous_mode=dangerous_mode,
+                )
+
+            # Full debate: Turn 1 parallel independent generation
             t1_results = self._run_turn_1(
                 phase_name=phase_name,
                 prompt_generator=prompt_generator,
@@ -101,7 +112,8 @@ class DebateOrchestrator:
 
             # Store Turn 1 session IDs using roles (not agent names) to avoid collisions
             self._store_session_id(phase_name, "primary", 1, t1_results.primary_result.session_id)
-            self._store_session_id(phase_name, "secondary", 1, t1_results.secondary_result.session_id)
+            if t1_results.secondary_result:
+                self._store_session_id(phase_name, "secondary", 1, t1_results.secondary_result.session_id)
 
             # Turn 2: Interactive debate exchange
             t2_results = self._run_turn_2_exchange(
@@ -142,6 +154,166 @@ class DebateOrchestrator:
                 final_output_file=final_file,
                 error=str(e),
             )
+
+    def _run_feedback_debate(
+        self,
+        phase_name: str,
+        prompt_generator: BaseDebatePromptGenerator,
+        primary_t1_file: Path,
+        debate_file: Path,
+        final_file: Path,
+        permission_mode: str | None,
+        allowed_tools: list[str] | None,
+        dangerous_mode: bool,
+    ) -> DebateResult:
+        """Execute feedback-only debate (mode='feedback').
+
+        Flow: primary generates → secondary reviews → primary synthesizes.
+        """
+        # Step 1: Primary-only Turn 1
+        t1_results = self._run_turn_1_primary_only(
+            phase_name=phase_name,
+            prompt_generator=prompt_generator,
+            primary_output_file=primary_t1_file,
+            permission_mode=permission_mode,
+            allowed_tools=allowed_tools,
+            dangerous_mode=dangerous_mode,
+        )
+
+        self._store_session_id(phase_name, "primary", 1, t1_results.primary_result.session_id)
+
+        # Step 2: Secondary feedback (single message)
+        t2_results = self._run_feedback_turn_2(
+            phase_name=phase_name,
+            prompt_generator=prompt_generator,
+            t1_results=t1_results,
+            debate_file=debate_file,
+            permission_mode=permission_mode,
+            allowed_tools=allowed_tools,
+            dangerous_mode=dangerous_mode,
+        )
+
+        # Step 3: Synthesis
+        synthesis = self._run_synthesis(
+            phase_name=phase_name,
+            prompt_generator=prompt_generator,
+            t1_results=t1_results,
+            debate_file=debate_file,
+            final_output_file=final_file,
+            permission_mode=permission_mode,
+            allowed_tools=allowed_tools,
+            dangerous_mode=dangerous_mode,
+        )
+
+        return DebateResult(
+            success=synthesis.success,
+            phase_name=phase_name,
+            final_output_file=final_file,
+            turn1=t1_results,
+            turn2=t2_results,
+            synthesis=synthesis,
+        )
+
+    def _run_turn_1_primary_only(
+        self,
+        phase_name: str,
+        prompt_generator: BaseDebatePromptGenerator,
+        primary_output_file: Path,
+        permission_mode: str | None,
+        allowed_tools: list[str] | None,
+        dangerous_mode: bool,
+    ) -> Turn1Results:
+        """Run Turn 1 with only the primary agent (feedback-only mode)."""
+        primary_prompt = prompt_generator.turn1_primary_prompt(primary_output_file)
+
+        primary_result = self.primary.execute(
+            prompt=primary_prompt,
+            permission_mode=permission_mode,
+            allowed_tools=allowed_tools,
+            max_turns=self._max_turns,
+            timeout=self.config.turn_timeout_seconds,
+            dangerous_mode=dangerous_mode,
+            working_dir=self.context.get_working_dir(),
+        )
+
+        return Turn1Results(
+            primary_result=primary_result,
+            secondary_result=None,
+            primary_output_file=primary_output_file,
+            secondary_output_file=None,
+            primary_agent=self.primary_agent,
+            secondary_agent=self.secondary_agent,
+        )
+
+    def _run_feedback_turn_2(
+        self,
+        phase_name: str,
+        prompt_generator: BaseDebatePromptGenerator,
+        t1_results: Turn1Results,
+        debate_file: Path,
+        permission_mode: str | None,
+        allowed_tools: list[str] | None,
+        dangerous_mode: bool,
+    ) -> Turn2Results:
+        """Run Turn 2 as a single feedback message from secondary."""
+        debate_log = DebateLog(
+            debate_file,
+            total_messages=1,
+            primary_agent=self.primary_agent,
+            secondary_agent=self.secondary_agent,
+        )
+        debate_log.write_header(phase_name, self.context.task_description)
+        debate_log.write_turn1_summary(t1_results)
+
+        # Generate feedback prompt (secondary reviews primary's output)
+        prompt = prompt_generator.feedback_prompt(
+            reviewer=self.secondary_agent,
+            primary_output=t1_results.primary_output_file,
+        )
+
+        # Secondary runs autonomous if it's a different agent type
+        effective_dangerous_mode = (
+            dangerous_mode
+            if self.secondary_agent == self.primary_agent
+            else True
+        )
+
+        result = self.secondary.execute(
+            prompt=prompt,
+            permission_mode=permission_mode,
+            allowed_tools=allowed_tools,
+            max_turns=self._max_turns,
+            timeout=self.config.message_timeout_seconds,
+            dangerous_mode=effective_dangerous_mode,
+            working_dir=self.context.get_working_dir(),
+        )
+
+        message = DebateMessage(
+            speaker=self.secondary_agent,
+            message_number=1,
+            content=result.output,
+            result=result,
+            role="secondary",
+        )
+
+        debate_log.append_message(
+            speaker=self.secondary_agent,
+            message_num=1,
+            content=result.output,
+            timestamp=datetime.now(),
+            role="secondary",
+        )
+        debate_log.write_synthesis_summary()
+
+        if result.session_id:
+            self._store_session_id(phase_name, "secondary", 2, result.session_id, 1)
+
+        return Turn2Results(
+            messages=[message],
+            debate_log_path=debate_file,
+            primary_agent=self.primary_agent,
+            secondary_agent=self.secondary_agent,
+        )
 
     def _run_turn_1(
         self,
@@ -421,19 +593,26 @@ class DebateOrchestrator:
             final_output_file=final_output_file,
         )
 
-        # Resume from primary agent's final Turn 2 message to carry debate context
-        # Use "primary" role (not agent name) for session lookup to support same-agent debates
-        resume_session = self.context.get_debate_session_id(
-            phase_name, "primary", 2, self.config.max_exchange_messages
-        )
-        # If no Turn 2 session (odd number of messages), try the previous one
-        if not resume_session:
-            for msg_num in range(self.config.max_exchange_messages, 0, -1):
-                resume_session = self.context.get_debate_session_id(
-                    phase_name, "primary", 2, msg_num
-                )
-                if resume_session:
-                    break
+        # Resume from appropriate session to carry context
+        if self.config.is_feedback_only:
+            # Feedback mode: resume from primary's Turn 1 (no primary T2 messages)
+            resume_session = self.context.get_debate_session_id(
+                phase_name, "primary", 1
+            )
+        else:
+            # Full debate: resume from primary's final Turn 2 message
+            # Use "primary" role (not agent name) for session lookup to support same-agent debates
+            resume_session = self.context.get_debate_session_id(
+                phase_name, "primary", 2, self.config.max_exchange_messages
+            )
+            # If no Turn 2 session (odd number of messages), try the previous one
+            if not resume_session:
+                for msg_num in range(self.config.max_exchange_messages, 0, -1):
+                    resume_session = self.context.get_debate_session_id(
+                        phase_name, "primary", 2, msg_num
+                    )
+                    if resume_session:
+                        break
 
         # Execute synthesis
         result = self.primary.execute(

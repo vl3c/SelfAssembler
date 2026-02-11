@@ -42,42 +42,28 @@ class DebateMessage:
 
 @dataclass
 class Turn1Results:
-    """Results from Turn 1 parallel generation."""
+    """Results from Turn 1 generation.
+
+    In full debate mode, both agents generate independently.
+    In feedback-only mode, only primary generates (secondary fields are None).
+    """
 
     primary_result: ExecutionResult
-    secondary_result: ExecutionResult
+    secondary_result: ExecutionResult | None
     primary_output_file: Path
-    secondary_output_file: Path
+    secondary_output_file: Path | None
     primary_agent: str = "claude"
     secondary_agent: str = "codex"
-
-    # Backward compatibility aliases
-    @property
-    def claude_result(self) -> ExecutionResult:
-        """Backward compatible alias for primary_result."""
-        return self.primary_result
-
-    @property
-    def codex_result(self) -> ExecutionResult:
-        """Backward compatible alias for secondary_result."""
-        return self.secondary_result
-
-    @property
-    def claude_output_file(self) -> Path:
-        """Backward compatible alias for primary_output_file."""
-        return self.primary_output_file
-
-    @property
-    def codex_output_file(self) -> Path:
-        """Backward compatible alias for secondary_output_file."""
-        return self.secondary_output_file
 
     @property
     def total_cost(self) -> float:
         """Get combined cost of Turn 1."""
-        return self.primary_result.cost_usd + self.secondary_result.cost_usd
+        cost = self.primary_result.cost_usd
+        if self.secondary_result:
+            cost += self.secondary_result.cost_usd
+        return cost
 
-    def get(self, agent: str) -> ExecutionResult:
+    def get(self, agent: str) -> ExecutionResult | None:
         """Get result for a specific agent."""
         if agent == self.primary_agent:
             return self.primary_result
@@ -86,7 +72,7 @@ class Turn1Results:
         else:
             raise ValueError(f"Unknown agent: {agent}")
 
-    def get_output_file(self, agent: str) -> Path:
+    def get_output_file(self, agent: str) -> Path | None:
         """Get output file path for a specific agent."""
         if agent == self.primary_agent:
             return self.primary_output_file
@@ -95,7 +81,7 @@ class Turn1Results:
         else:
             raise ValueError(f"Unknown agent: {agent}")
 
-    def get_output_file_by_role(self, role: str) -> Path:
+    def get_output_file_by_role(self, role: str) -> Path | None:
         """Get output file path by role (primary/secondary).
 
         This method should be preferred over get_output_file() when working
@@ -160,27 +146,11 @@ class Turn2Results:
         # Fallback to agent name for backward compatibility
         return self.get_agent_messages(self.secondary_agent)
 
-    # Backward compatibility
-    def get_claude_messages(self) -> list[DebateMessage]:
-        """Get all messages from Claude (backward compatible)."""
-        return [m for m in self.messages if m.speaker == "claude"]
-
-    def get_codex_messages(self) -> list[DebateMessage]:
-        """Get all messages from Codex (backward compatible)."""
-        return [m for m in self.messages if m.speaker == "codex"]
-
     def get_final_primary_session(self) -> str | None:
         """Get the session ID from primary agent's final message."""
         primary_msgs = self.get_primary_messages()
         if primary_msgs:
             return primary_msgs[-1].session_id
-        return None
-
-    def get_final_claude_session(self) -> str | None:
-        """Get the session ID from Claude's final message (backward compatible)."""
-        claude_msgs = self.get_claude_messages()
-        if claude_msgs:
-            return claude_msgs[-1].session_id
         return None
 
 
@@ -255,40 +225,32 @@ class DebateResult:
     def secondary_cost(self) -> float:
         """Get cost attributed to secondary agent."""
         cost = 0.0
-        if self.turn1:
+        if self.turn1 and self.turn1.secondary_result:
             cost += self.turn1.secondary_result.cost_usd
         if self.turn2:
             for msg in self.turn2.get_secondary_messages():
                 cost += msg.cost_usd
         return cost
 
-    # Backward compatibility aliases
-    @property
-    def claude_cost(self) -> float:
-        """Get cost attributed to Claude (backward compatible)."""
-        return self.primary_cost
-
-    @property
-    def codex_cost(self) -> float:
-        """Get cost attributed to Codex (backward compatible)."""
-        return self.secondary_cost
-
     def get_session_ids(self) -> dict[str, str]:
-        """Get all session IDs from the debate."""
+        """Get all session IDs from the debate.
+
+        Uses role-based keys (``turn1_primary``, ``turn1_secondary``) to
+        avoid collisions when primary_agent == secondary_agent.
+        """
         sessions = {}
 
         if self.turn1:
-            primary = self.turn1.primary_agent
-            secondary = self.turn1.secondary_agent
             if self.turn1.primary_result.session_id:
-                sessions[f"turn1_{primary}"] = self.turn1.primary_result.session_id
-            if self.turn1.secondary_result.session_id:
-                sessions[f"turn1_{secondary}"] = self.turn1.secondary_result.session_id
+                sessions["turn1_primary"] = self.turn1.primary_result.session_id
+            if self.turn1.secondary_result and self.turn1.secondary_result.session_id:
+                sessions["turn1_secondary"] = self.turn1.secondary_result.session_id
 
         if self.turn2:
             for msg in self.turn2.messages:
                 if msg.session_id:
-                    key = f"turn2_{msg.speaker}_msg{msg.message_number}"
+                    role = msg.role or msg.speaker
+                    key = f"turn2_{role}_msg{msg.message_number}"
                     sessions[key] = msg.session_id
 
         if self.synthesis and self.synthesis.session_id:
@@ -297,7 +259,11 @@ class DebateResult:
         return sessions
 
     def to_phase_result_artifacts(self) -> dict[str, Any]:
-        """Convert to artifacts dict compatible with PhaseResult."""
+        """Convert to artifacts dict compatible with PhaseResult.
+
+        Uses role-based keys (``primary_t1_file``, ``secondary_t1_file``)
+        to avoid collisions when primary_agent == secondary_agent.
+        """
         artifacts = {
             "debate_enabled": True,
             "total_cost": self.total_cost,
@@ -306,12 +272,11 @@ class DebateResult:
         }
 
         if self.turn1:
-            primary = self.turn1.primary_agent
-            secondary = self.turn1.secondary_agent
-            artifacts["primary_agent"] = primary
-            artifacts["secondary_agent"] = secondary
-            artifacts[f"{primary}_t1_file"] = str(self.turn1.primary_output_file)
-            artifacts[f"{secondary}_t1_file"] = str(self.turn1.secondary_output_file)
+            artifacts["primary_agent"] = self.turn1.primary_agent
+            artifacts["secondary_agent"] = self.turn1.secondary_agent
+            artifacts["primary_t1_file"] = str(self.turn1.primary_output_file)
+            if self.turn1.secondary_output_file:
+                artifacts["secondary_t1_file"] = str(self.turn1.secondary_output_file)
 
         if self.turn2 and self.turn2.debate_log_path:
             artifacts["debate_log_file"] = str(self.turn2.debate_log_path)
