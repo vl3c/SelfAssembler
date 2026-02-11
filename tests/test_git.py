@@ -237,6 +237,78 @@ class TestGitManagerFetch:
         mock_run.assert_not_called()
 
 
+class TestGitManagerCleanupUnreachableRemote:
+    """Tests for cleanup_unreachable_remote method."""
+
+    @patch("selfassembler.git.GitManager._validate_repo")
+    @patch("selfassembler.git.GitManager._run")
+    def test_removes_unreachable_local_path(self, mock_run, mock_validate):
+        """Test that an origin pointing to a nonexistent local path is removed."""
+        mock_run.side_effect = [
+            # get_remote_url: returns a local path
+            MagicMock(returncode=0, stdout="/var/lib/code/my-project\n"),
+            # remove_remote
+            MagicMock(returncode=0),
+        ]
+
+        manager = GitManager(Path("/test/repo"))
+        removed = manager.cleanup_unreachable_remote()
+
+        assert removed is True
+        mock_run.assert_any_call(["remote", "remove", "origin"], check=False)
+
+    @patch("selfassembler.git.GitManager._validate_repo")
+    @patch("selfassembler.git.GitManager._run")
+    def test_keeps_https_remote(self, mock_run, mock_validate):
+        """Test that an HTTPS origin is not removed."""
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout="https://github.com/owner/repo\n"
+        )
+
+        manager = GitManager(Path("/test/repo"))
+        removed = manager.cleanup_unreachable_remote()
+
+        assert removed is False
+
+    @patch("selfassembler.git.GitManager._validate_repo")
+    @patch("selfassembler.git.GitManager._run")
+    def test_keeps_ssh_remote(self, mock_run, mock_validate):
+        """Test that a git@ origin is not removed."""
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout="git@github.com:owner/repo.git\n"
+        )
+
+        manager = GitManager(Path("/test/repo"))
+        removed = manager.cleanup_unreachable_remote()
+
+        assert removed is False
+
+    @patch("selfassembler.git.GitManager._validate_repo")
+    @patch("selfassembler.git.GitManager._run")
+    def test_no_remote_returns_false(self, mock_run, mock_validate):
+        """Test that no origin returns False."""
+        mock_run.return_value = MagicMock(returncode=2, stdout="", stderr="")
+
+        manager = GitManager(Path("/test/repo"))
+        removed = manager.cleanup_unreachable_remote()
+
+        assert removed is False
+
+    @patch("selfassembler.git.Path.exists", return_value=True)
+    @patch("selfassembler.git.GitManager._validate_repo")
+    @patch("selfassembler.git.GitManager._run")
+    def test_keeps_reachable_local_path(self, mock_run, mock_validate, mock_exists):
+        """Test that a reachable local path origin is not removed."""
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout="/var/lib/code/existing-repo\n"
+        )
+
+        manager = GitManager(Path("/test/repo"))
+        removed = manager.cleanup_unreachable_remote()
+
+        assert removed is False
+
+
 class TestGitManagerIsClean:
     """Tests for is_clean method."""
 

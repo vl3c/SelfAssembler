@@ -225,6 +225,15 @@ class PreflightPhase(Phase):
     timeout_seconds = 60
 
     def run(self) -> PhaseResult:
+        # Remove unreachable local-path origins before running checks.
+        # This handles repos cloned from a local path that are now running
+        # inside a container where the original path doesn't exist.
+        try:
+            git = GitManager(self.context.repo_path)
+            git.cleanup_unreachable_remote()
+        except Exception:
+            pass  # Best-effort; individual checks will report git issues
+
         checks = [
             self._check_agent_cli(),
             self._check_gh_cli(),

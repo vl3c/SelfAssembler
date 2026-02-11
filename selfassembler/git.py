@@ -70,6 +70,35 @@ class GitManager:
         result = self._run(["remote", "get-url", remote], check=False)
         return result.returncode == 0
 
+    def get_remote_url(self, remote: str = "origin") -> str | None:
+        """Get the URL of a remote, or None if it doesn't exist."""
+        result = self._run(["remote", "get-url", remote], check=False)
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip()
+
+    def remove_remote(self, remote: str = "origin") -> None:
+        """Remove a remote."""
+        self._run(["remote", "remove", remote], check=False)
+
+    def cleanup_unreachable_remote(self, remote: str = "origin") -> bool:
+        """Remove a remote if it points to a local path that doesn't exist.
+
+        This handles the case where a repo was cloned from a local path
+        (e.g. /var/lib/code/my-project) but is now running inside a
+        container where that path doesn't exist.
+
+        Returns:
+            True if the remote was removed, False otherwise.
+        """
+        url = self.get_remote_url(remote)
+        if url is None:
+            return False
+        if url.startswith("/") and not Path(url).exists():
+            self.remove_remote(remote)
+            return True
+        return False
+
     def fetch(self, remote: str = "origin") -> None:
         """Fetch from remote."""
         if not self.has_remote(remote):
