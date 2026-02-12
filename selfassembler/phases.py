@@ -405,6 +405,15 @@ class SetupPhase(Phase):
                 patterns=self.config.copy_files,
             )
 
+            # Copy selfassembler.yaml to worktree so config is found on resume
+            import shutil
+            for config_name in ("selfassembler.yaml", "selfassembler.yml",
+                                ".selfassembler.yaml", ".selfassembler.yml"):
+                config_src = self.context.repo_path / config_name
+                if config_src.exists():
+                    shutil.copy2(config_src, worktree_path / config_name)
+                    break
+
             # Update context
             self.context.worktree_path = worktree_path
             self.context.branch_name = branch_name
