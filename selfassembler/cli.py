@@ -105,6 +105,12 @@ Examples:
         choices=PHASE_NAMES,
         help=f"Skip to a specific phase. Choices: {', '.join(PHASE_NAMES)}",
     )
+    resume_group.add_argument(
+        "--skip-phases",
+        metavar="PHASES",
+        help="Comma-separated phases to mark complete and skip (e.g., 'lint_check,documentation'). "
+        "Persistent: skipped phases stay skipped on future resumes.",
+    )
 
     # Configuration
     config_group = parser.add_argument_group("configuration")
@@ -633,12 +639,46 @@ def main(args: list[str] | None = None) -> int:
     if parsed.resume:
         try:
             orchestrator = Orchestrator.from_checkpoint(parsed.resume, config)
+
+            # Apply CLI overrides on top of snapshot config
+            if parsed.budget:
+                orchestrator.config.budget_limit_usd = parsed.budget
+            if parsed.no_approvals or parsed.autonomous:
+                orchestrator.config.approvals.enabled = False
+            if parsed.autonomous:
+                orchestrator.config.autonomous_mode = True
+                orchestrator.config.agent.dangerous_mode = True
+                orchestrator.config.claude.dangerous_mode = True
+            if parsed.no_stream:
+                orchestrator.config.streaming.enabled = False
+            if parsed.debug:
+                orchestrator.config.streaming.debug = parsed.debug
+
             print(f"Resuming from checkpoint: {parsed.resume}")
             print(f"Task: {orchestrator.context.task_name}")
             print(f"Last phase: {orchestrator.context.current_phase}")
+
+            # Mark phases as persistently complete (--skip-phases)
+            if parsed.skip_phases:
+                for phase in parsed.skip_phases.split(","):
+                    phase = phase.strip()
+                    if phase in PHASE_NAMES:
+                        orchestrator.context.mark_phase_complete(phase)
+                        print(f"Skipping phase: {phase}")
+                    else:
+                        print(f"Warning: Unknown phase '{phase}', ignoring", file=sys.stderr)
+
             print()
 
-            orchestrator.resume_workflow()
+            # --skip-to with --resume: mark all phases before target as complete
+            if parsed.skip_to:
+                skip_idx = PHASE_NAMES.index(parsed.skip_to)
+                for phase_name in PHASE_NAMES[:skip_idx]:
+                    orchestrator.context.mark_phase_complete(phase_name)
+                orchestrator.run_workflow(skip_to=parsed.skip_to)
+            else:
+                orchestrator.resume_workflow()
+
             return 0
 
         except SelfAssemblerError as e:
