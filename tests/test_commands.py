@@ -138,6 +138,21 @@ test_example.py .....                                                    [100%]
         assert result["failed"] == 0
         assert result["all_passed"] is True
 
+    def test_parse_go_output_captures_fail_lines(self):
+        """Test that Go-style FAIL: lines are captured in failures."""
+        output = """
+--- FAIL: TestName/SubTest (0.01s)
+--- FAIL: TestOther (0.05s)
+FAIL	example.com/pkg	0.123s
+"""
+        result = parse_test_output(output)
+        assert len(result["failures"]) >= 2
+        assert any("TestName/SubTest" in f for f in result["failures"])
+        assert any("TestOther" in f for f in result["failures"])
+        # failure_ids should be extracted
+        assert "TestName/SubTest" in result["failure_ids"]
+        assert "TestOther" in result["failure_ids"]
+
     def test_parse_test_output_includes_failure_ids(self):
         """Test that parse_test_output populates failure_ids."""
         output = """

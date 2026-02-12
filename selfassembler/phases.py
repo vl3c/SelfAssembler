@@ -892,7 +892,12 @@ class TestExecutionPhase(Phase):
         )
 
     def _capture_baseline(self, workdir: Path, test_cmd: str) -> list[str]:
-        """Run tests once and capture pre-existing failure IDs.
+        """Run tests on the clean base-branch state to capture pre-existing failures.
+
+        Stashes all uncommitted changes (implementation, test-writing, etc.),
+        runs the test command on the pristine base, then restores the stash.
+        This ensures the baseline reflects the state *before* the task's changes,
+        so task-introduced failures are never mislabeled as pre-existing.
 
         Stores in context artifact so subsequent calls (retries, resume) reuse
         the cached result.
@@ -901,10 +906,20 @@ class TestExecutionPhase(Phase):
         if existing is not None:
             return existing  # Already captured (retry, resume, etc.)
 
-        success, stdout, stderr = run_command(workdir, test_cmd, timeout=300)
-        output = stdout + stderr
-        test_result = parse_test_output(output)
-        baseline = test_result.get("failure_ids", [])
+        # Stash all changes (including untracked) to test on clean base
+        stash_ok, _, _ = run_command(
+            workdir, "git stash push --include-untracked -m sa-baseline-capture", timeout=30,
+        )
+
+        try:
+            success, stdout, stderr = run_command(workdir, test_cmd, timeout=300)
+            output = stdout + stderr
+            test_result = parse_test_output(output)
+            baseline = test_result.get("failure_ids", [])
+        finally:
+            # Always restore the stash, even if tests crash
+            if stash_ok:
+                run_command(workdir, "git stash pop", timeout=30)
 
         self.context.set_artifact("test_baseline_failures", baseline)
         self.context.set_artifact("test_baseline_exit_ok", success)
@@ -913,8 +928,13 @@ class TestExecutionPhase(Phase):
     def _run_with_claude_detection(self) -> PhaseResult:
         """Let Claude detect and run tests.
 
-        Note: baseline diffing is not applied in this path — Claude handles
-        test interpretation internally.
+        **Limitation — no baseline diffing**: This fallback delegates test
+        detection, execution, and failure interpretation entirely to Claude.
+        Because there is no structured command to capture a baseline from,
+        baseline-diff resilience does not apply here. Pre-existing failures
+        may cause this path to fail even if no net-new regressions exist.
+        This path is only taken when no test command can be auto-detected
+        or overridden via config.
         """
         prompt = """
 Detect and run the project's tests:

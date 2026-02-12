@@ -395,15 +395,18 @@ class TestTestExecutionBaselineDiff:
         config = WorkflowConfig()
         phase = TestExecutionPhase(context, executor, config)
 
-        # Simulate: test command found, baseline captured, only baseline failures remain
+        # Simulate: test command found, baseline captured on stashed clean state,
+        # then same failures appear post-implementation
         with patch("selfassembler.phases.get_command", return_value="pytest"), \
              patch("selfassembler.phases.run_command") as mock_run, \
              patch("selfassembler.phases.parse_test_output") as mock_parse, \
              patch("selfassembler.phases.load_known_failures", return_value=[]):
 
-            # _capture_baseline call
+            # _capture_baseline: stash → run tests → stash pop, then iteration 0
             mock_run.side_effect = [
-                (False, "FAILED tests/test_a.py::test_x\n1 failed, 5 passed", ""),  # baseline
+                (True, "", ""),  # git stash push (baseline capture)
+                (False, "FAILED tests/test_a.py::test_x\n1 failed, 5 passed", ""),  # baseline test run
+                (True, "", ""),  # git stash pop (baseline capture)
                 (False, "FAILED tests/test_a.py::test_x\n1 failed, 5 passed", ""),  # iteration 0
             ]
             mock_parse.side_effect = [
@@ -445,15 +448,17 @@ class TestTestExecutionBaselineDiff:
              patch("selfassembler.phases.load_known_failures", return_value=[]):
 
             mock_run.side_effect = [
-                (True, "6 passed", ""),  # baseline (all pass)
+                (True, "", ""),  # git stash push (baseline)
+                (True, "6 passed", ""),  # baseline test run (all pass on clean base)
+                (True, "", ""),  # git stash pop
                 (False, "FAILED tests/test_new.py::test_broke\n1 failed, 5 passed", ""),  # iteration 0
             ]
             mock_parse.side_effect = [
-                {  # baseline: no failures
+                {  # baseline: no failures on clean base
                     "passed": 6, "failed": 0, "skipped": 0, "total": 6,
                     "failures": [], "failure_ids": [], "all_passed": True,
                 },
-                {  # iteration 0: new failure
+                {  # iteration 0: new failure introduced by task
                     "passed": 5, "failed": 1, "skipped": 0, "total": 6,
                     "failures": ["FAILED tests/test_new.py::test_broke"],
                     "failure_ids": ["tests/test_new.py::test_broke"],
@@ -483,7 +488,9 @@ class TestTestExecutionBaselineDiff:
              patch("selfassembler.phases.load_known_failures", return_value=[]):
 
             mock_run.side_effect = [
-                (True, "6 passed", ""),  # baseline
+                (True, "", ""),  # git stash push (baseline)
+                (True, "6 passed", ""),  # baseline test run
+                (True, "", ""),  # git stash pop
                 (True, "6 passed", ""),  # iteration 0
             ]
             mock_parse.side_effect = [

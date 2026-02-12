@@ -473,7 +473,7 @@ def parse_test_output(output: str) -> dict[str, Any]:
                 result["failed"] = int(failed.group(1))
 
         # Capture failure messages
-        if "FAILED" in line or "FAIL " in line or "Error:" in line:
+        if "FAILED" in line or "FAIL " in line or "FAIL:" in line or "Error:" in line:
             result["failures"].append(line.strip())
 
     result["total"] = result["passed"] + result["failed"] + result["skipped"]
