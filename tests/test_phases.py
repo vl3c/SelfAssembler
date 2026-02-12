@@ -368,6 +368,296 @@ class TestDangerousModeConfig:
         assert phase._dangerous_mode() is True
 
 
+class TestTestExecutionBaselineDiff:
+    """Tests for TestExecutionPhase baseline-diff behavior."""
+
+    @pytest.fixture
+    def context(self) -> WorkflowContext:
+        """Create a workflow context for testing."""
+        return WorkflowContext(
+            task_description="Test",
+            task_name="test",
+            repo_path=Path("/test/repo"),
+            plans_dir=Path("/test/repo/plans"),
+        )
+
+    @pytest.fixture
+    def executor(self) -> MockClaudeExecutor:
+        """Create a mock executor."""
+        return MockClaudeExecutor()
+
+    def test_baseline_failures_result_in_success_with_warnings(
+        self, context: WorkflowContext, executor: MockClaudeExecutor
+    ):
+        """Test that only pre-existing failures → success with warnings."""
+        from selfassembler.phases import TestExecutionPhase
+
+        config = WorkflowConfig()
+        phase = TestExecutionPhase(context, executor, config)
+
+        # Simulate: test command found, baseline captured, only baseline failures remain
+        with patch("selfassembler.phases.get_command", return_value="pytest"), \
+             patch("selfassembler.phases.run_command") as mock_run, \
+             patch("selfassembler.phases.parse_test_output") as mock_parse, \
+             patch("selfassembler.phases.load_known_failures", return_value=[]):
+
+            # _capture_baseline call
+            mock_run.side_effect = [
+                (False, "FAILED tests/test_a.py::test_x\n1 failed, 5 passed", ""),  # baseline
+                (False, "FAILED tests/test_a.py::test_x\n1 failed, 5 passed", ""),  # iteration 0
+            ]
+            mock_parse.side_effect = [
+                {  # baseline parse
+                    "passed": 5, "failed": 1, "skipped": 0, "total": 6,
+                    "failures": ["FAILED tests/test_a.py::test_x"],
+                    "failure_ids": ["tests/test_a.py::test_x"],
+                    "all_passed": False,
+                },
+                {  # iteration 0 parse
+                    "passed": 5, "failed": 1, "skipped": 0, "total": 6,
+                    "failures": ["FAILED tests/test_a.py::test_x"],
+                    "failure_ids": ["tests/test_a.py::test_x"],
+                    "all_passed": False,
+                },
+            ]
+
+            result = phase.run()
+
+        assert result.success is True
+        assert len(result.warnings) == 1
+        assert "pre-existing" in result.warnings[0]
+        assert result.artifacts.get("baseline_failures_present") == ["tests/test_a.py::test_x"]
+
+    def test_net_new_failures_trigger_fix_loop(
+        self, context: WorkflowContext, executor: MockClaudeExecutor
+    ):
+        """Test that net-new failures don't result in early success."""
+        from selfassembler.phases import TestExecutionPhase
+
+        config = WorkflowConfig()
+        # Set max_iterations to 1 so it fails quickly
+        config.phases.test_execution.max_iterations = 1
+        phase = TestExecutionPhase(context, executor, config)
+
+        with patch("selfassembler.phases.get_command", return_value="pytest"), \
+             patch("selfassembler.phases.run_command") as mock_run, \
+             patch("selfassembler.phases.parse_test_output") as mock_parse, \
+             patch("selfassembler.phases.load_known_failures", return_value=[]):
+
+            mock_run.side_effect = [
+                (True, "6 passed", ""),  # baseline (all pass)
+                (False, "FAILED tests/test_new.py::test_broke\n1 failed, 5 passed", ""),  # iteration 0
+            ]
+            mock_parse.side_effect = [
+                {  # baseline: no failures
+                    "passed": 6, "failed": 0, "skipped": 0, "total": 6,
+                    "failures": [], "failure_ids": [], "all_passed": True,
+                },
+                {  # iteration 0: new failure
+                    "passed": 5, "failed": 1, "skipped": 0, "total": 6,
+                    "failures": ["FAILED tests/test_new.py::test_broke"],
+                    "failure_ids": ["tests/test_new.py::test_broke"],
+                    "all_passed": False,
+                },
+            ]
+
+            result = phase.run()
+
+        assert result.success is False
+
+    def test_no_baseline_artifact_triggers_capture(
+        self, context: WorkflowContext, executor: MockClaudeExecutor
+    ):
+        """Test that baseline is lazily captured when artifact is missing."""
+        from selfassembler.phases import TestExecutionPhase
+
+        config = WorkflowConfig()
+        phase = TestExecutionPhase(context, executor, config)
+
+        # No artifact exists yet
+        assert context.get_artifact("test_baseline_failures", None) is None
+
+        with patch("selfassembler.phases.get_command", return_value="pytest"), \
+             patch("selfassembler.phases.run_command") as mock_run, \
+             patch("selfassembler.phases.parse_test_output") as mock_parse, \
+             patch("selfassembler.phases.load_known_failures", return_value=[]):
+
+            mock_run.side_effect = [
+                (True, "6 passed", ""),  # baseline
+                (True, "6 passed", ""),  # iteration 0
+            ]
+            mock_parse.side_effect = [
+                {"passed": 6, "failed": 0, "skipped": 0, "total": 6,
+                 "failures": [], "failure_ids": [], "all_passed": True},
+                {"passed": 6, "failed": 0, "skipped": 0, "total": 6,
+                 "failures": [], "failure_ids": [], "all_passed": True},
+            ]
+
+            phase.run()
+
+        # Baseline should now be captured
+        assert context.get_artifact("test_baseline_failures", None) is not None
+
+    def test_baseline_disabled_skips_capture(
+        self, context: WorkflowContext, executor: MockClaudeExecutor
+    ):
+        """Test that baseline_enabled=false skips capture."""
+        from selfassembler.phases import TestExecutionPhase
+
+        config = WorkflowConfig()
+        config.phases.test_execution.baseline_enabled = False
+        config.phases.test_execution.max_iterations = 1
+        phase = TestExecutionPhase(context, executor, config)
+
+        with patch("selfassembler.phases.get_command", return_value="pytest"), \
+             patch("selfassembler.phases.run_command") as mock_run, \
+             patch("selfassembler.phases.parse_test_output") as mock_parse:
+
+            mock_run.return_value = (False, "FAILED tests/test_a.py::test_x\n1 failed", "")
+            mock_parse.return_value = {
+                "passed": 0, "failed": 1, "skipped": 0, "total": 1,
+                "failures": ["FAILED tests/test_a.py::test_x"],
+                "failure_ids": ["tests/test_a.py::test_x"],
+                "all_passed": False,
+            }
+
+            result = phase.run()
+
+        # Should fail without baseline tolerance
+        assert result.success is False
+        # No baseline artifact stored
+        assert context.get_artifact("test_baseline_failures", None) is None
+
+
+class TestFinalVerificationBaselineDiff:
+    """Tests for FinalVerificationPhase baseline-diff behavior."""
+
+    @pytest.fixture
+    def context(self) -> WorkflowContext:
+        """Create a workflow context for testing."""
+        return WorkflowContext(
+            task_description="Test",
+            task_name="test",
+            repo_path=Path("/test/repo"),
+            plans_dir=Path("/test/repo/plans"),
+        )
+
+    @pytest.fixture
+    def executor(self) -> MockClaudeExecutor:
+        """Create a mock executor."""
+        return MockClaudeExecutor()
+
+    def test_baseline_ignored_in_final_verification(
+        self, context: WorkflowContext, executor: MockClaudeExecutor
+    ):
+        """Test that pre-existing failures are tolerated in final verification."""
+        from selfassembler.phases import FinalVerificationPhase
+
+        config = WorkflowConfig()
+        # Pre-populate baseline artifact (would have been set by TestExecutionPhase)
+        context.set_artifact("test_baseline_failures", ["tests/test_a.py::test_x"])
+
+        phase = FinalVerificationPhase(context, executor, config)
+
+        with patch("selfassembler.phases.get_command") as mock_cmd, \
+             patch("selfassembler.phases.run_command") as mock_run, \
+             patch("selfassembler.phases.parse_test_output") as mock_parse, \
+             patch("selfassembler.phases.load_known_failures", return_value=[]):
+
+            mock_cmd.side_effect = lambda w, t, o=None: "pytest" if t == "test" else None
+            mock_run.return_value = (False, "FAILED tests/test_a.py::test_x\n1 failed, 5 passed", "")
+            mock_parse.return_value = {
+                "passed": 5, "failed": 1, "skipped": 0, "total": 6,
+                "failures": ["FAILED tests/test_a.py::test_x"],
+                "failure_ids": ["tests/test_a.py::test_x"],
+                "all_passed": False,
+            }
+
+            result = phase.run()
+
+        assert result.success is True
+        assert len(result.warnings) == 1
+        assert "pre-existing" in result.warnings[0]
+
+    def test_net_new_blocks_final_verification(
+        self, context: WorkflowContext, executor: MockClaudeExecutor
+    ):
+        """Test that net-new failures block final verification."""
+        from selfassembler.phases import FinalVerificationPhase
+
+        config = WorkflowConfig()
+        context.set_artifact("test_baseline_failures", ["tests/test_a.py::test_x"])
+
+        phase = FinalVerificationPhase(context, executor, config)
+
+        with patch("selfassembler.phases.get_command") as mock_cmd, \
+             patch("selfassembler.phases.run_command") as mock_run, \
+             patch("selfassembler.phases.parse_test_output") as mock_parse, \
+             patch("selfassembler.phases.load_known_failures", return_value=[]):
+
+            mock_cmd.side_effect = lambda w, t, o=None: "pytest" if t == "test" else None
+            mock_run.return_value = (
+                False,
+                "FAILED tests/test_a.py::test_x\nFAILED tests/test_new.py::test_broke\n2 failed",
+                "",
+            )
+            mock_parse.return_value = {
+                "passed": 4, "failed": 2, "skipped": 0, "total": 6,
+                "failures": [
+                    "FAILED tests/test_a.py::test_x",
+                    "FAILED tests/test_new.py::test_broke",
+                ],
+                "failure_ids": ["tests/test_a.py::test_x", "tests/test_new.py::test_broke"],
+                "all_passed": False,
+            }
+
+            result = phase.run()
+
+        assert result.success is False
+        assert "net-new" in result.error
+
+    def test_build_failure_still_strict(
+        self, context: WorkflowContext, executor: MockClaudeExecutor
+    ):
+        """Test that build failures remain strict regardless of baseline."""
+        from selfassembler.phases import FinalVerificationPhase
+
+        config = WorkflowConfig()
+        context.set_artifact("test_baseline_failures", ["tests/test_a.py::test_x"])
+
+        phase = FinalVerificationPhase(context, executor, config)
+
+        with patch("selfassembler.phases.get_command") as mock_cmd, \
+             patch("selfassembler.phases.run_command") as mock_run, \
+             patch("selfassembler.phases.parse_test_output") as mock_parse, \
+             patch("selfassembler.phases.load_known_failures", return_value=[]):
+
+            # Tests pass with baseline tolerance, but build fails
+            def cmd_side_effect(w, t, o=None):
+                if t == "test":
+                    return "pytest"
+                if t == "build":
+                    return "python -m build"
+                return None
+
+            mock_cmd.side_effect = cmd_side_effect
+            mock_run.side_effect = [
+                (False, "FAILED tests/test_a.py::test_x\n1 failed, 5 passed", ""),  # test
+                (False, "", "Build error: syntax error"),  # build
+            ]
+            mock_parse.return_value = {
+                "passed": 5, "failed": 1, "skipped": 0, "total": 6,
+                "failures": ["FAILED tests/test_a.py::test_x"],
+                "failure_ids": ["tests/test_a.py::test_x"],
+                "all_passed": False,
+            }
+
+            result = phase.run()
+
+        assert result.success is False
+        assert "Build verification failed" in result.error
+
+
 class TestPreflightGitAutoUpdate:
     """Tests for preflight auto-update git behavior."""
 

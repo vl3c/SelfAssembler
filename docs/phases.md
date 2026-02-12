@@ -182,12 +182,19 @@ phases:
 3. Fix the failing code (test or implementation)
 4. Repeat until tests pass or max iterations reached
 
+**Baseline-diff behavior**: On the first test run, the phase captures a baseline of pre-existing test failures (before any fix attempts). Subsequent test runs diff current failures against this baseline — only **net-new** failures trigger the fix loop or cause a phase failure. Pre-existing failures (e.g. environment-specific tests that fail in Docker) are ignored and reported as warnings.
+
+You can also list known failures in a `.sa-known-failures` file (one test ID per line, `#` comments allowed) which are treated the same as baseline failures.
+
+If the test command exits non-zero but produces no parseable failure IDs (e.g. import errors, collection crashes), the phase fails strictly to avoid silently passing broken runs.
+
 **Configuration**:
 ```yaml
 phases:
   test_execution:
     timeout: 1800
     max_iterations: 5  # Max fix-and-retry loops
+    baseline_enabled: true  # Capture and diff against pre-existing test failures
 ```
 
 ---
@@ -277,6 +284,8 @@ phases:
 1. Run tests one final time
 2. Run build if available
 3. Verify no regressions
+
+**Baseline tolerance**: Pre-existing test failures captured during the Test Execution phase are tolerated here as well — only net-new failures cause a failure. Build failures remain strict (no baseline tolerance).
 
 ---
 
@@ -399,7 +408,7 @@ Each phase may produce artifacts stored in the context:
 | Setup | `worktree_path`, `branch_name` |
 | Research | `research_file` |
 | Planning | `plan_file` |
-| Test Execution | `iterations`, `test_results` |
+| Test Execution | `iterations`, `test_results`, `baseline_failures_present`, `warnings` |
 | Code Review | `review_file` |
 | Commit Prep | `commit_hash` |
 | PR Creation | `pr_url` |

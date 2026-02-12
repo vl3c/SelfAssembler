@@ -57,6 +57,7 @@ class PhaseConfig(BaseModel):
     max_retries: int = Field(default=0, ge=0)  # Phase-level retries on failure
     estimated_cost: float = Field(default=1.0, ge=0.0)
     enabled: bool = Field(default=True)
+    baseline_enabled: bool = Field(default=True)  # Capture test baseline for diff-based pass/fail
 
 
 class PhasesConfig(BaseModel):

@@ -10,7 +10,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from selfassembler.commands import get_command, parse_test_output, run_command
+from selfassembler.commands import (
+    diff_test_failures,
+    get_command,
+    load_known_failures,
+    parse_test_output,
+    run_command,
+)
 from selfassembler.errors import PreflightFailedError
 from selfassembler.git import GitManager, copy_config_files
 
@@ -31,6 +37,7 @@ class PhaseResult:
     timed_out: bool = False
     session_id: str | None = None
     failure_category: Any = None  # FailureCategory | None
+    warnings: list[str] = field(default_factory=list)
 
 
 class Phase(ABC):
@@ -779,6 +786,15 @@ class TestExecutionPhase(Phase):
         if not test_cmd:
             return self._run_with_claude_detection()
 
+        # Capture baseline if enabled
+        baseline_ids: list[str] = []
+        known_ids: list[str] = []
+        baseline_enabled = phase_config.baseline_enabled
+
+        if baseline_enabled:
+            baseline_ids = self._capture_baseline(workdir, test_cmd)
+            known_ids = load_known_failures(workdir)
+
         error_history: list[frozenset[str]] = []
         fix_session_id: str | None = None
         test_result: dict = {}
@@ -797,6 +813,31 @@ class TestExecutionPhase(Phase):
                         "test_results": test_result,
                     },
                 )
+
+            # Baseline diff: check if all failures are pre-existing
+            if baseline_enabled:
+                current_ids = test_result.get("failure_ids", [])
+                net_new, baseline_present = diff_test_failures(
+                    current_ids, baseline_ids, known_ids, exit_code_failed=not success,
+                )
+                if not net_new:
+                    warnings = []
+                    if baseline_present:
+                        warnings.append(
+                            f"Ignored {len(baseline_present)} pre-existing test failure(s): "
+                            + ", ".join(baseline_present[:5])
+                            + ("..." if len(baseline_present) > 5 else "")
+                        )
+                    return PhaseResult(
+                        success=True,
+                        cost_usd=self.context.phase_costs.get(self.name, 0.0),
+                        artifacts={
+                            "iterations": iteration + 1,
+                            "test_results": test_result,
+                            "baseline_failures_present": baseline_present,
+                        },
+                        warnings=warnings,
+                    )
 
             # Extract error fingerprints for cycle detection
             current_errors = LintCheckPhase._parse_error_locations(output)
@@ -850,8 +891,31 @@ class TestExecutionPhase(Phase):
             artifacts={"test_results": test_result, "output": stdout + stderr},
         )
 
+    def _capture_baseline(self, workdir: Path, test_cmd: str) -> list[str]:
+        """Run tests once and capture pre-existing failure IDs.
+
+        Stores in context artifact so subsequent calls (retries, resume) reuse
+        the cached result.
+        """
+        existing = self.context.get_artifact("test_baseline_failures", None)
+        if existing is not None:
+            return existing  # Already captured (retry, resume, etc.)
+
+        success, stdout, stderr = run_command(workdir, test_cmd, timeout=300)
+        output = stdout + stderr
+        test_result = parse_test_output(output)
+        baseline = test_result.get("failure_ids", [])
+
+        self.context.set_artifact("test_baseline_failures", baseline)
+        self.context.set_artifact("test_baseline_exit_ok", success)
+        return baseline
+
     def _run_with_claude_detection(self) -> PhaseResult:
-        """Let Claude detect and run tests."""
+        """Let Claude detect and run tests.
+
+        Note: baseline diffing is not applied in this path — Claude handles
+        test interpretation internally.
+        """
         prompt = """
 Detect and run the project's tests:
 
@@ -1410,18 +1474,43 @@ class FinalVerificationPhase(Phase):
 
     def run(self) -> PhaseResult:
         workdir = self.context.get_working_dir()
+        warnings: list[str] = []
 
         # Run tests one more time
         test_cmd = get_command(workdir, "test", self.config.commands.test)
         if test_cmd:
             success, stdout, stderr = run_command(workdir, test_cmd, timeout=300)
             if not success:
-                return PhaseResult(
-                    success=False,
-                    error=f"Final test verification failed:\n{stdout}\n{stderr}",
-                )
+                # Check baseline diff before failing
+                phase_config = self.get_phase_config()
+                baseline_ids = self.context.get_artifact("test_baseline_failures", None)
+                if baseline_ids is not None and phase_config.baseline_enabled:
+                    output = stdout + stderr
+                    test_result = parse_test_output(output)
+                    current_ids = test_result.get("failure_ids", [])
+                    known_ids = load_known_failures(workdir)
+                    net_new, baseline_present = diff_test_failures(
+                        current_ids, baseline_ids, known_ids, exit_code_failed=True,
+                    )
+                    if not net_new:
+                        if baseline_present:
+                            warnings.append(
+                                f"Final verification: ignored {len(baseline_present)} "
+                                f"pre-existing test failure(s)"
+                            )
+                    else:
+                        return PhaseResult(
+                            success=False,
+                            error=f"Final test verification failed with net-new failures:\n"
+                            + "\n".join(net_new[:10]),
+                        )
+                else:
+                    return PhaseResult(
+                        success=False,
+                        error=f"Final test verification failed:\n{stdout}\n{stderr}",
+                    )
 
-        # Run build if available
+        # Run build if available (build failures remain strict — no baseline tolerance)
         build_cmd = get_command(workdir, "build", self.config.commands.build)
         if build_cmd:
             success, stdout, stderr = run_command(workdir, build_cmd, timeout=300)
@@ -1434,6 +1523,7 @@ class FinalVerificationPhase(Phase):
         return PhaseResult(
             success=True,
             artifacts={"test_passed": True, "build_passed": build_cmd is not None},
+            warnings=warnings,
         )
 
 

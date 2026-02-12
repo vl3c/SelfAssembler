@@ -149,6 +149,7 @@ phases:
     max_iterations: 5  # Max fix-and-retry loops
     estimated_cost: 2.0
     enabled: true
+    baseline_enabled: true  # Diff against pre-existing test failures; disable to fail on any failure
 
   code_review:
     timeout: 600
