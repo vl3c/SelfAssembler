@@ -535,6 +535,69 @@ class TestTestExecutionBaselineDiff:
         # No baseline artifact stored
         assert context.get_artifact("test_baseline_failures", None) is None
 
+    def test_stash_push_failure_falls_back_to_strict_mode(
+        self, context: WorkflowContext, executor: MockClaudeExecutor
+    ):
+        """Test stash failure disables baseline tolerance instead of silently masking failures."""
+        from selfassembler.phases import TestExecutionPhase
+
+        config = WorkflowConfig()
+        config.phases.test_execution.max_iterations = 1
+        phase = TestExecutionPhase(context, executor, config)
+
+        with patch("selfassembler.phases.get_command", return_value="pytest"), \
+             patch("selfassembler.phases.run_command") as mock_run, \
+             patch("selfassembler.phases.parse_test_output") as mock_parse:
+
+            mock_run.side_effect = [
+                (False, "", "fatal: could not write index"),  # git stash push fails
+                (False, "FAILED tests/test_a.py::test_x\n1 failed", ""),  # iteration 0
+            ]
+            mock_parse.return_value = {
+                "passed": 0, "failed": 1, "skipped": 0, "total": 1,
+                "failures": ["FAILED tests/test_a.py::test_x"],
+                "failure_ids": ["tests/test_a.py::test_x"],
+                "all_passed": False,
+            }
+
+            result = phase.run()
+
+        assert result.success is False
+        assert context.get_artifact("test_baseline_failures", None) is None
+        baseline_warnings = result.artifacts.get("baseline_warnings", [])
+        assert len(baseline_warnings) == 1
+        assert "Baseline capture skipped" in baseline_warnings[0]
+
+    def test_stash_pop_failure_fails_phase_fatal(
+        self, context: WorkflowContext, executor: MockClaudeExecutor
+    ):
+        """Test stash-restore failure returns a fatal phase error."""
+        from selfassembler.errors import FailureCategory
+        from selfassembler.phases import TestExecutionPhase
+
+        config = WorkflowConfig()
+        phase = TestExecutionPhase(context, executor, config)
+
+        with patch("selfassembler.phases.get_command", return_value="pytest"), \
+             patch("selfassembler.phases.run_command") as mock_run, \
+             patch("selfassembler.phases.parse_test_output") as mock_parse:
+
+            mock_run.side_effect = [
+                (True, "", ""),  # git stash push
+                (True, "6 passed", ""),  # baseline test run
+                (False, "", "Auto-merging file.py\nCONFLICT"),  # git stash pop fails
+            ]
+            mock_parse.return_value = {
+                "passed": 6, "failed": 0, "skipped": 0, "total": 6,
+                "failures": [], "failure_ids": [], "all_passed": True,
+            }
+
+            result = phase.run()
+
+        assert result.success is False
+        assert result.failure_category == FailureCategory.FATAL
+        assert "could not restore stashed changes" in (result.error or "")
+
 
 class TestFinalVerificationBaselineDiff:
     """Tests for FinalVerificationPhase baseline-diff behavior."""
