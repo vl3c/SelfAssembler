@@ -94,12 +94,13 @@ class CheckpointManager:
         hash_part = hashlib.sha256(data.encode()).hexdigest()[:8]
         return f"{self.checkpoint_prefix}{hash_part}"
 
-    def create_checkpoint(self, context: WorkflowContext) -> str:
+    def create_checkpoint(self, context: WorkflowContext, config: Any = None) -> str:
         """
         Create a checkpoint for the current workflow state.
 
         Args:
             context: The workflow context to checkpoint
+            config: Optional WorkflowConfig to snapshot (saved for reliable resume)
 
         Returns:
             The checkpoint ID
@@ -111,11 +112,13 @@ class CheckpointManager:
             checkpoint_id = context.checkpoint_id or self._generate_checkpoint_id(context)
             context.checkpoint_id = checkpoint_id
 
-            checkpoint_data = {
+            checkpoint_data: dict[str, Any] = {
                 "id": checkpoint_id,
                 "created_at": datetime.now().isoformat(),
                 "context": context.to_dict(),
             }
+            if config is not None:
+                checkpoint_data["config"] = config.model_dump()
 
             self.store.save(checkpoint_id, checkpoint_data)
             return checkpoint_id
