@@ -92,7 +92,7 @@ class ClaudeExecutor(AgentExecutor):
                 resume_session=resume_session,
                 dangerous_mode=dangerous_mode,
                 working_dir=effective_working_dir,
-            )
+            ).validate()
 
         cmd = self._build_command(
             prompt=prompt,
@@ -114,7 +114,7 @@ class ClaudeExecutor(AgentExecutor):
                 timeout=effective_timeout,
             )
             elapsed_ms = int((time.time() - start_time) * 1000)
-            return self._parse_result(result, elapsed_ms)
+            return self._parse_result(result, elapsed_ms).validate()
 
         except subprocess.TimeoutExpired as e:
             elapsed_ms = int((time.time() - start_time) * 1000)
@@ -282,14 +282,16 @@ class ClaudeExecutor(AgentExecutor):
                     agent_type=self.AGENT_TYPE,
                 )
 
-            # No result event found, construct from events
+            # No result event found — always treat as error
+            stderr_text = "".join(stderr_lines).strip()
             return ExecutionResult(
                 session_id="",
-                output="Streaming completed without result event",
+                output=f"No result event received. Stderr: {stderr_text[:500]}" if stderr_text
+                else "Agent produced no output (possible auth or config issue)",
                 cost_usd=0.0,
                 duration_ms=elapsed_ms,
                 num_turns=len([e for e in all_events if e.event_type == "assistant"]),
-                is_error=process.returncode != 0,
+                is_error=True,
                 raw_output="",
                 agent_type=self.AGENT_TYPE,
             )
@@ -356,14 +358,20 @@ class ClaudeExecutor(AgentExecutor):
                 agent_type=self.AGENT_TYPE,
             )
         except json.JSONDecodeError:
-            # If JSON parsing fails, treat as plain text output
+            # If JSON parsing fails and stdout is empty, include stderr
+            if not raw_output.strip() and result.stderr:
+                output = f"No parseable output. Stderr: {result.stderr[:500]}"
+                is_error = True
+            else:
+                output = raw_output
+                is_error = result.returncode != 0
             return ExecutionResult(
                 session_id="",
-                output=raw_output,
+                output=output,
                 cost_usd=0.0,
                 duration_ms=elapsed_ms,
                 num_turns=0,
-                is_error=result.returncode != 0,
+                is_error=is_error,
                 raw_output=raw_output,
                 agent_type=self.AGENT_TYPE,
             )

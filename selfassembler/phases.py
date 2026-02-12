@@ -30,6 +30,7 @@ class PhaseResult:
     artifacts: dict[str, Any] = field(default_factory=dict)
     timed_out: bool = False
     session_id: str | None = None
+    failure_category: Any = None  # FailureCategory | None
 
 
 class Phase(ABC):
@@ -404,6 +405,15 @@ class SetupPhase(Phase):
                 patterns=self.config.copy_files,
             )
 
+            # Copy selfassembler.yaml to worktree so config is found on resume
+            import shutil
+            for config_name in ("selfassembler.yaml", "selfassembler.yml",
+                                ".selfassembler.yaml", ".selfassembler.yml"):
+                config_src = self.context.repo_path / config_name
+                if config_src.exists():
+                    shutil.copy2(config_src, worktree_path / config_name)
+                    break
+
             # Update context
             self.context.worktree_path = worktree_path
             self.context.branch_name = branch_name
@@ -757,29 +767,26 @@ class TestExecutionPhase(Phase):
     timeout_seconds = 1800
 
     def run(self) -> PhaseResult:
+        from selfassembler.errors import FailureCategory
+
         phase_config = self.get_phase_config()
         max_iterations = phase_config.max_iterations
+        workdir = self.context.get_working_dir()
 
         # Get test command
-        test_cmd = get_command(
-            self.context.get_working_dir(),
-            "test",
-            self.config.commands.test,
-        )
+        test_cmd = get_command(workdir, "test", self.config.commands.test)
 
         if not test_cmd:
-            # Let Claude detect and run tests
             return self._run_with_claude_detection()
 
-        for iteration in range(max_iterations):
-            # Run tests
-            success, stdout, stderr = run_command(
-                self.context.get_working_dir(),
-                test_cmd,
-                timeout=300,
-            )
+        error_history: list[frozenset[str]] = []
+        fix_session_id: str | None = None
+        test_result: dict = {}
 
-            test_result = parse_test_output(stdout + stderr)
+        for iteration in range(max_iterations):
+            success, stdout, stderr = run_command(workdir, test_cmd, timeout=300)
+            output = stdout + stderr
+            test_result = parse_test_output(output)
 
             if test_result["all_passed"] or success:
                 return PhaseResult(
@@ -791,15 +798,49 @@ class TestExecutionPhase(Phase):
                     },
                 )
 
+            # Extract error fingerprints for cycle detection
+            current_errors = LintCheckPhase._parse_error_locations(output)
+
+            # Only run cycle/stagnation detection when we have parseable fingerprints
+            if current_errors:
+                if current_errors in error_history:
+                    run_command(workdir, "git checkout -- .", timeout=30)
+                    return PhaseResult(
+                        success=False,
+                        cost_usd=self.context.phase_costs.get(self.name, 0.0),
+                        error="Test fix oscillation detected — same errors recurring",
+                        artifacts={"test_results": test_result, "output": output},
+                        failure_category=FailureCategory.OSCILLATING,
+                    )
+
+                if len(error_history) >= 2:
+                    prev = error_history[-1]
+                    resolved = prev - current_errors
+                    if not resolved:
+                        run_command(workdir, "git checkout -- .", timeout=30)
+                        return PhaseResult(
+                            success=False,
+                            cost_usd=self.context.phase_costs.get(self.name, 0.0),
+                            error="Test fix stagnation — no errors resolved across 2 iterations",
+                            artifacts={"test_results": test_result, "output": output},
+                            failure_category=FailureCategory.OSCILLATING,
+                        )
+
+                error_history.append(current_errors)
+
             # Fix failures (except on last iteration)
             if iteration < max_iterations - 1:
-                fix_result = self._fix_failures(stdout + stderr, test_result)
-                if not fix_result.get("changes_made"):
+                # Stage current state as savepoint
+                run_command(workdir, "git add -A", timeout=30)
+
+                fix_session_id = self._fix_failures(output, test_result, session_id=fix_session_id)
+                if fix_session_id is None:
+                    run_command(workdir, "git checkout -- .", timeout=30)
                     return PhaseResult(
                         success=False,
                         cost_usd=self.context.phase_costs.get(self.name, 0.0),
                         error="Unable to fix test failures",
-                        artifacts={"test_results": test_result, "output": stdout + stderr},
+                        artifacts={"test_results": test_result, "output": output},
                     )
 
         return PhaseResult(
@@ -839,29 +880,33 @@ Report the final test results.
             error=result.output if result.is_error else None,
         )
 
-    def _fix_failures(self, output: str, test_result: dict[str, Any]) -> dict[str, Any]:
-        """Use Claude to fix test failures."""
+    def _fix_failures(
+        self,
+        output: str,
+        test_result: dict[str, Any],
+        session_id: str | None = None,
+    ) -> str | None:
+        """Fix test failures. Returns session_id for continuity, None on failure."""
         failures_summary = "\n".join(test_result.get("failures", [])[:10])
 
-        prompt = f"""
-Tests failed. Analyze and fix the failures:
+        if session_id:
+            prompt = (
+                f"Tests still fail after your previous fix. Do not revert your previous changes.\n\n"
+                f"Test output:\n{output[:3000]}\n\nFailures:\n{failures_summary}\n\n"
+                f"Fix the remaining issues. Do NOT run tests."
+            )
+        else:
+            prompt = (
+                f"Tests failed. Analyze and fix the failures:\n\n"
+                f"Test output:\n{output[:3000]}\n\nFailures detected:\n{failures_summary}\n\n"
+                f"Steps:\n1. Read the failing test code\n2. Read the implementation being tested\n"
+                f"3. Determine if the bug is in the test or implementation\n4. Fix the bug\n\n"
+                f"Do NOT run tests yet (I will run them after your fixes)."
+            )
 
-Test output:
-{output[:3000]}
-
-Failures detected:
-{failures_summary}
-
-Steps:
-1. Read the failing test code
-2. Read the implementation being tested
-3. Determine if the bug is in the test or implementation
-4. Fix the bug
-
-Do NOT run tests yet (I will run them after your fixes).
-"""
         result = self.executor.execute(
             prompt=prompt,
+            resume_session=session_id,
             permission_mode=self._get_permission_mode(),
             allowed_tools=["Read", "Edit", "Grep"],
             max_turns=15,
@@ -870,7 +915,7 @@ Do NOT run tests yet (I will run them after your fixes).
         )
 
         self.context.add_cost(self.name, result.cost_usd)
-        return {"changes_made": not result.is_error}
+        return result.session_id if not result.is_error else None
 
 
 class CodeReviewPhase(DebatePhase):
@@ -1013,6 +1058,8 @@ class LintCheckPhase(Phase):
     timeout_seconds = 300
 
     def run(self) -> PhaseResult:
+        from selfassembler.errors import FailureCategory
+
         workdir = self.context.get_working_dir()
         results = []
         phase_config = self.config.get_phase_config(self.name)
@@ -1023,6 +1070,25 @@ class LintCheckPhase(Phase):
         typecheck_cmd = get_command(workdir, "typecheck", self.config.commands.typecheck)
         format_cmd = get_command(workdir, "format")
 
+        # Scope commands to changed files only (Improvement 2: diff-scoped linting)
+        from selfassembler.commands import scope_command_to_files
+
+        try:
+            git = GitManager(workdir)
+            changed = git.get_changed_files(self.config.git.base_branch, cwd=workdir)
+        except Exception:
+            changed = []
+
+        if changed and lint_cmd:
+            scoped = scope_command_to_files(lint_cmd, changed, workdir)
+            if scoped:
+                lint_cmd = scoped
+
+        if changed and typecheck_cmd:
+            scoped = scope_command_to_files(typecheck_cmd, changed, workdir)
+            if scoped:
+                typecheck_cmd = scoped
+
         # If no commands found, let Claude handle it
         if not lint_cmd and not typecheck_cmd:
             return self._claude_detect_and_lint()
@@ -1032,9 +1098,13 @@ class LintCheckPhase(Phase):
             success, stdout, stderr = run_command(workdir, format_cmd, timeout=120)
             results.append({"command": "format", "success": success, "output": stdout + stderr})
 
-        # Run lint with iterative fix loop
+        # Run lint with iterative fix loop + cycle detection
         lint_success = True
+        lint_failure_category = None
         if lint_cmd:
+            error_history: list[frozenset[str]] = []
+            fix_session_id: str | None = None
+
             for iteration in range(max_iterations):
                 success, stdout, stderr = run_command(workdir, lint_cmd, timeout=120)
                 output = stdout + stderr
@@ -1050,19 +1120,57 @@ class LintCheckPhase(Phase):
                     lint_success = True
                     break
 
+                current_errors = self._parse_error_locations(output)
+
+                # Only run cycle/stagnation detection when we have parseable fingerprints
+                if current_errors:
+                    # Cycle detection: exact repeat
+                    if current_errors in error_history:
+                        run_command(workdir, "git checkout -- .", timeout=30)
+                        lint_success = False
+                        lint_failure_category = FailureCategory.OSCILLATING
+                        break
+
+                    # Stagnation detection: no errors resolved across 2 consecutive iterations
+                    if len(error_history) >= 2:
+                        prev = error_history[-1]
+                        resolved = prev - current_errors
+                        if not resolved:
+                            run_command(workdir, "git checkout -- .", timeout=30)
+                            lint_success = False
+                            lint_failure_category = FailureCategory.OSCILLATING
+                            break
+
+                    error_history.append(current_errors)
+
                 # Try to fix lint issues with Claude
                 if iteration < max_iterations - 1:
-                    fix_result = self._fix_lint_issues(output)
-                    if not fix_result:
-                        # Claude couldn't fix, no point retrying
+                    # Stage current state as savepoint before fix attempt
+                    run_command(workdir, "git add -A", timeout=30)
+
+                    # Build context for the fix prompt
+                    new_errors = current_errors - (error_history[-2] if len(error_history) >= 2 else frozenset())
+                    fixed_errors = (error_history[-2] if len(error_history) >= 2 else frozenset()) - current_errors
+
+                    fix_session_id = self._fix_lint_issues(
+                        output, session_id=fix_session_id,
+                        new_errors=new_errors, fixed_errors=fixed_errors,
+                    )
+                    if fix_session_id is None:
+                        # Fix attempt failed — restore staged savepoint
+                        run_command(workdir, "git checkout -- .", timeout=30)
                         lint_success = False
                         break
                 else:
                     lint_success = False
 
-        # Run typecheck with iterative fix loop
+        # Run typecheck with iterative fix loop + cycle detection
         typecheck_success = True
+        typecheck_failure_category = None
         if typecheck_cmd:
+            error_history = []
+            fix_session_id = None
+
             for iteration in range(max_iterations):
                 success, stdout, stderr = run_command(workdir, typecheck_cmd, timeout=180)
                 output = stdout + stderr
@@ -1078,11 +1186,38 @@ class LintCheckPhase(Phase):
                     typecheck_success = True
                     break
 
-                # Try to fix type issues with Claude
+                current_errors = self._parse_error_locations(output)
+
+                if current_errors:
+                    if current_errors in error_history:
+                        run_command(workdir, "git checkout -- .", timeout=30)
+                        typecheck_success = False
+                        typecheck_failure_category = FailureCategory.OSCILLATING
+                        break
+
+                    if len(error_history) >= 2:
+                        prev = error_history[-1]
+                        resolved = prev - current_errors
+                        if not resolved:
+                            run_command(workdir, "git checkout -- .", timeout=30)
+                            typecheck_success = False
+                            typecheck_failure_category = FailureCategory.OSCILLATING
+                            break
+
+                    error_history.append(current_errors)
+
                 if iteration < max_iterations - 1:
-                    fix_result = self._fix_type_issues(output)
-                    if not fix_result:
-                        # Claude couldn't fix, no point retrying
+                    run_command(workdir, "git add -A", timeout=30)
+
+                    new_errors = current_errors - (error_history[-2] if len(error_history) >= 2 else frozenset())
+                    fixed_errors = (error_history[-2] if len(error_history) >= 2 else frozenset()) - current_errors
+
+                    fix_session_id = self._fix_type_issues(
+                        output, session_id=fix_session_id,
+                        new_errors=new_errors, fixed_errors=fixed_errors,
+                    )
+                    if fix_session_id is None:
+                        run_command(workdir, "git checkout -- .", timeout=30)
                         typecheck_success = False
                         break
                 else:
@@ -1092,25 +1227,51 @@ class LintCheckPhase(Phase):
         if not lint_success or not typecheck_success:
             failed = [r for r in results if not r["success"]]
             error_msg = "\n".join(f"{r['command']}: {r['output'][:500]}" for r in failed[-2:])
+            failure_category = lint_failure_category or typecheck_failure_category
             return PhaseResult(
                 success=False,
                 error=f"Lint/typecheck still failing after {max_iterations} iterations:\n{error_msg}",
                 artifacts={"results": results},
+                failure_category=failure_category,
             )
 
         return PhaseResult(success=True, artifacts={"results": results})
 
-    def _fix_lint_issues(self, output: str) -> bool:
-        """Use Claude to fix lint issues."""
-        prompt = f"""
-Fix the linting errors:
+    @staticmethod
+    def _parse_error_locations(output: str) -> frozenset[str]:
+        """Extract error fingerprints from lint/typecheck output."""
+        errors = set()
+        for line in output.splitlines():
+            # mypy: "file.py:42: error: Something [code]"
+            # ruff: "file.py:42:10: E501 ..."
+            # eslint: "/path/file.js  42:10  error  ..."
+            m = re.match(r'(\S+?:\d+(?::\d+)?)\s*[:\s]', line)
+            if m:
+                errors.add(m.group(1))
+        return frozenset(errors)
 
-{output[:2000]}
+    def _fix_lint_issues(
+        self,
+        output: str,
+        session_id: str | None = None,
+        new_errors: frozenset[str] | None = None,
+        fixed_errors: frozenset[str] | None = None,
+    ) -> str | None:
+        """Fix lint issues. Returns session_id for continuity, None on failure."""
+        if session_id:
+            context_parts = ["Lint errors persist after your previous fix."]
+            if fixed_errors:
+                context_parts.append(f"Fixed in last iteration: {len(fixed_errors)} error(s).")
+            if new_errors:
+                context_parts.append(f"New errors introduced: {len(new_errors)} error(s).")
+            context_parts.append("Do not revert your previous changes.")
+            prompt = "\n".join(context_parts) + f"\n\nCurrent errors:\n{output[:2000]}\n\nFix remaining issues."
+        else:
+            prompt = f"Fix the linting errors:\n\n{output[:2000]}\n\nMake the minimal changes needed."
 
-Make the minimal changes needed to fix the lint errors.
-"""
         result = self.executor.execute(
             prompt=prompt,
+            resume_session=session_id,
             permission_mode=self._get_permission_mode(),
             allowed_tools=["Read", "Edit"],
             max_turns=10,
@@ -1118,20 +1279,34 @@ Make the minimal changes needed to fix the lint errors.
             working_dir=self.context.get_working_dir(),
         )
         self.context.add_cost(self.name, result.cost_usd)
-        return not result.is_error
+        return result.session_id if not result.is_error else None
 
-    def _fix_type_issues(self, output: str) -> bool:
-        """Use Claude to fix type checking issues."""
-        prompt = f"""
-Fix the type checking errors:
+    def _fix_type_issues(
+        self,
+        output: str,
+        session_id: str | None = None,
+        new_errors: frozenset[str] | None = None,
+        fixed_errors: frozenset[str] | None = None,
+    ) -> str | None:
+        """Fix type checking issues. Returns session_id for continuity, None on failure."""
+        if session_id:
+            context_parts = ["Type errors persist after your previous fix."]
+            if fixed_errors:
+                context_parts.append(f"Fixed in last iteration: {len(fixed_errors)} error(s).")
+            if new_errors:
+                context_parts.append(f"New errors introduced: {len(new_errors)} error(s).")
+            context_parts.append("Do not revert your previous changes.")
+            prompt = "\n".join(context_parts) + f"\n\nCurrent errors:\n{output[:2000]}\n\nFix remaining issues."
+        else:
+            prompt = (
+                f"Fix the type checking errors:\n\n{output[:2000]}\n\n"
+                "Make the minimal changes needed. Add type annotations, fix type mismatches, "
+                "or add type: ignore comments where appropriate."
+            )
 
-{output[:2000]}
-
-Make the minimal changes needed to fix the type errors.
-Add type annotations, fix type mismatches, or add type: ignore comments where appropriate.
-"""
         result = self.executor.execute(
             prompt=prompt,
+            resume_session=session_id,
             permission_mode=self._get_permission_mode(),
             allowed_tools=["Read", "Edit"],
             max_turns=10,
@@ -1139,7 +1314,7 @@ Add type annotations, fix type mismatches, or add type: ignore comments where ap
             working_dir=self.context.get_working_dir(),
         )
         self.context.add_cost(self.name, result.cost_usd)
-        return not result.is_error
+        return result.session_id if not result.is_error else None
 
     def _claude_detect_and_lint(self) -> PhaseResult:
         """Let Claude detect and run linting."""

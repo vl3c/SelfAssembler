@@ -531,6 +531,7 @@ class Orchestrator:
                     "success": result.success,
                     "cost_usd": result.cost_usd,
                     "error": result.error[:500] if result.error else None,
+                    "failure_category": str(result.failure_category) if result.failure_category else None,
                 },
                 output=str(result.artifacts) if result.artifacts else None,
             )
@@ -540,6 +541,13 @@ class Orchestrator:
 
             if result.success:
                 break
+
+            # Category-based retry decision
+            from selfassembler.errors import FailureCategory
+
+            if result.failure_category in (FailureCategory.FATAL, FailureCategory.OSCILLATING):
+                self.notifier.on_phase_failed(phase_name, result, will_retry=False)
+                break  # No point retrying
 
             # If not the last attempt, log and retry
             if attempt < max_retries:
@@ -571,10 +579,14 @@ class Orchestrator:
                 self._wait_for_approval(phase_name, last_result.artifacts)
 
         else:
+            failure_cat = last_result.failure_category if last_result else None
             self.logger.log(
                 "phase_failed",
                 phase=phase_name,
-                data={"error": last_result.error if last_result else "No result"},
+                data={
+                    "error": last_result.error if last_result else "No result",
+                    "failure_category": str(failure_cat) if failure_cat else None,
+                },
             )
             raise PhaseFailedError(
                 phase_name,
@@ -619,7 +631,9 @@ class Orchestrator:
     def _checkpoint(self) -> None:
         """Create a checkpoint of the current state."""
         try:
-            checkpoint_id = self.checkpoint_manager.create_checkpoint(self.context)
+            checkpoint_id = self.checkpoint_manager.create_checkpoint(
+                self.context, config=self.config,
+            )
             self.notifier.on_checkpoint_created(checkpoint_id)
         except Exception:
             pass  # Don't fail workflow on checkpoint failure
@@ -659,9 +673,13 @@ class Orchestrator:
         """
         Create an orchestrator from a checkpoint.
 
+        Loads config from the checkpoint snapshot first (if available),
+        then falls back to file-based config. CLI-level overrides should
+        be applied on the returned orchestrator's config after this call.
+
         Args:
             checkpoint_id: The checkpoint ID to resume from
-            config: Optional config override
+            config: Optional config override (used as fallback)
 
         Returns:
             An Orchestrator ready to resume the workflow
@@ -671,11 +689,16 @@ class Orchestrator:
         checkpoint_manager = CheckpointManager()
         context = checkpoint_manager.load_checkpoint(checkpoint_id)
 
-        # Load config from file if not provided
-        if config is None:
-            config = WorkflowConfig.load()
+        # Load config from snapshot (prefer stored config over file-based)
+        raw_data = checkpoint_manager.store.load(checkpoint_id)
+        if raw_data and raw_data.get("config"):
+            loaded_config = WorkflowConfig.model_validate(raw_data["config"])
+        elif config is not None:
+            loaded_config = config
+        else:
+            loaded_config = WorkflowConfig.load()
 
-        return cls(context, config)
+        return cls(context, loaded_config)
 
     def resume_workflow(self) -> WorkflowContext:
         """

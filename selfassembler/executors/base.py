@@ -29,6 +29,21 @@ class ExecutionResult:
         """Get duration in seconds."""
         return self.duration_ms / 1000.0
 
+    def validate(self) -> ExecutionResult:
+        """Flag suspicious results as errors."""
+        if not self.is_error and self.cost_usd == 0.0 and not self.output.strip():
+            return ExecutionResult(
+                session_id=self.session_id,
+                output="Agent produced no output and reported zero cost (possible auth/config issue)",
+                cost_usd=0.0,
+                duration_ms=self.duration_ms,
+                num_turns=self.num_turns,
+                is_error=True,
+                raw_output=self.raw_output,
+                agent_type=self.agent_type,
+            )
+        return self
+
 
 @dataclass
 class StreamEvent:

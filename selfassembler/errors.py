@@ -2,6 +2,17 @@
 
 from __future__ import annotations
 
+from enum import Enum
+
+
+class FailureCategory(Enum):
+    """Classification of phase failure types for retry decisions."""
+
+    TRANSIENT = "transient"  # Temporary failure, always retry
+    FIXABLE = "fixable"  # Errors the AI might fix, retry up to max
+    FATAL = "fatal"  # Unrecoverable, stop immediately
+    OSCILLATING = "oscillating"  # Fix loop cycling, stop immediately
+
 
 class SelfAssemblerError(Exception):
     """Base exception for all SelfAssembler errors."""

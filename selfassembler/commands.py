@@ -76,6 +76,48 @@ PROJECT_COMMANDS: dict[str, dict[str, list[str]]] = {
 }
 
 
+# Tools that accept file arguments for diff-scoped linting.
+# Each entry maps a tool prefix to the file extensions it handles.
+_SCOPABLE_TOOLS: dict[str, set[str]] = {
+    "mypy": {".py"},
+    "pyright": {".py"},
+    "ruff check": {".py"},
+    "flake8": {".py"},
+    "eslint": {".js", ".jsx", ".ts", ".tsx"},
+}
+
+
+def scope_command_to_files(cmd: str, changed_files: list[str], workdir: Path) -> str | None:
+    """Scope a lint/typecheck command to only changed files, if supported.
+
+    Preserves all original flags/options and only replaces the trailing
+    path target (typically ``"."``) with the list of changed files.
+
+    Returns the scoped command, or None to fall back to full-project run.
+    """
+    if not changed_files:
+        return None
+
+    for prefix, exts in _SCOPABLE_TOOLS.items():
+        if not cmd.startswith(prefix):
+            continue
+        # Filter to relevant extensions and existing files
+        relevant = [
+            f for f in changed_files
+            if any(f.endswith(ext) for ext in exts) and (workdir / f).exists()
+        ]
+        if not relevant:
+            return None  # No relevant changed files
+        quoted = " ".join(shlex.quote(f) for f in relevant)
+        # Replace trailing "." target with file list, preserving all flags
+        if cmd.rstrip().endswith(" ."):
+            return cmd.rstrip()[:-1] + quoted
+        # No trailing "." — append files to the original command as-is
+        return cmd.rstrip() + " " + quoted
+
+    return None  # Tool not scopable
+
+
 def detect_project_type(workdir: Path) -> str | None:
     """
     Detect the project type based on marker files.

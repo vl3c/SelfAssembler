@@ -171,7 +171,7 @@ class CodexExecutor(AgentExecutor):
                 resume_session=resume_session,
                 dangerous_mode=dangerous_mode,
                 working_dir=effective_working_dir,
-            )
+            ).validate()
 
         cmd = self._build_command(
             prompt=prompt,
@@ -193,7 +193,7 @@ class CodexExecutor(AgentExecutor):
                 timeout=effective_timeout,
             )
             elapsed_ms = int((time.time() - start_time) * 1000)
-            return self._parse_result(result, elapsed_ms)
+            return self._parse_result(result, elapsed_ms).validate()
 
         except subprocess.TimeoutExpired as e:
             elapsed_ms = int((time.time() - start_time) * 1000)
