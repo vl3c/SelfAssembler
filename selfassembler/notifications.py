@@ -218,6 +218,11 @@ class Notifier:
 
     def on_workflow_complete(self, context: WorkflowContext) -> None:
         """Notify that workflow completed successfully."""
+        workflow_warnings = context.get_artifact("workflow_warnings", [])
+        warnings_section = ""
+        if workflow_warnings:
+            warnings_section = "\nWarnings:\n" + "\n".join(f"  - {w}" for w in workflow_warnings) + "\n"
+
         message = f"""
 Workflow complete: {context.task_name}
 
@@ -225,7 +230,7 @@ PR: {context.pr_url or "Not created"}
 Branch: {context.branch_name or "N/A"}
 Total cost: ${context.total_cost_usd:.2f}
 Duration: {context.elapsed_time():.0f}s
-
+{warnings_section}
 Ready for human review.
 """
         self._send(
@@ -237,6 +242,7 @@ Ready for human review.
                 "branch": context.branch_name,
                 "cost_usd": context.total_cost_usd,
                 "duration_s": context.elapsed_time(),
+                "warnings": workflow_warnings or None,
             },
             event="workflow_complete",
         )

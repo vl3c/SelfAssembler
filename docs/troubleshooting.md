@@ -231,6 +231,30 @@ export SELFASSEMBLER_ALLOW_HOST_AUTONOMOUS="I_ACCEPT_THE_RISK"
 3. **Skip to manual fix**: Resume and skip test execution
 4. **Run tests manually**: Debug in the worktree
 
+### Pre-existing test failures in Docker/CI
+
+**Symptom**: Tests that pass on the host fail inside Docker (e.g. permission checks, filesystem assumptions), causing the test execution phase to enter an infinite fix loop or fail on unfixable environment issues.
+
+**How it works**: SelfAssembler captures a baseline of test failures on the first run (before any fix attempts). Subsequent runs diff against this baseline — only **net-new** failures trigger fixes or block the workflow. Pre-existing failures are reported as warnings.
+
+**Solutions**:
+
+1. **Automatic** (default): `baseline_enabled: true` is on by default. Pre-existing failures are automatically detected and ignored.
+
+2. **Explicit known-failures file**: Create `.sa-known-failures` in the project root with one test ID per line:
+   ```
+   # Tests that fail in Docker due to permission checks
+   tests/test_workspace.py::TestSaveWorkspace::test_save_workspace_failure
+   tests/test_permissions.py::test_chown_requires_root
+   ```
+
+3. **Disable baseline** (strict mode): Set `baseline_enabled: false` to fail on any test failure:
+   ```yaml
+   phases:
+     test_execution:
+       baseline_enabled: false
+   ```
+
 ### No test command detected
 
 **Error**: Test phase completes without running tests

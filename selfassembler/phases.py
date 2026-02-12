@@ -10,7 +10,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from selfassembler.commands import get_command, parse_test_output, run_command
+from selfassembler.commands import (
+    diff_test_failures,
+    get_command,
+    load_known_failures,
+    parse_test_output,
+    run_command,
+)
 from selfassembler.errors import PreflightFailedError
 from selfassembler.git import GitManager, copy_config_files
 
@@ -31,6 +37,7 @@ class PhaseResult:
     timed_out: bool = False
     session_id: str | None = None
     failure_category: Any = None  # FailureCategory | None
+    warnings: list[str] = field(default_factory=list)
 
 
 class Phase(ABC):
@@ -779,6 +786,33 @@ class TestExecutionPhase(Phase):
         if not test_cmd:
             return self._run_with_claude_detection()
 
+        # Capture baseline if enabled
+        baseline_ids: list[str] = []
+        known_ids: list[str] = []
+        baseline_warnings: list[str] = []
+        baseline_enabled = phase_config.baseline_enabled
+
+        if baseline_enabled:
+            try:
+                captured_baseline, baseline_warning = self._capture_baseline(workdir, test_cmd)
+            except RuntimeError as e:
+                return PhaseResult(
+                    success=False,
+                    cost_usd=self.context.phase_costs.get(self.name, 0.0),
+                    error=str(e),
+                    failure_category=FailureCategory.FATAL,
+                )
+
+            if captured_baseline is None:
+                # Fall back to strict behavior (no baseline tolerance) if we cannot
+                # safely establish a clean baseline.
+                baseline_enabled = False
+                if baseline_warning:
+                    baseline_warnings.append(baseline_warning)
+            else:
+                baseline_ids = captured_baseline
+                known_ids = load_known_failures(workdir)
+
         error_history: list[frozenset[str]] = []
         fix_session_id: str | None = None
         test_result: dict = {}
@@ -796,7 +830,33 @@ class TestExecutionPhase(Phase):
                         "iterations": iteration + 1,
                         "test_results": test_result,
                     },
+                    warnings=baseline_warnings,
                 )
+
+            # Baseline diff: check if all failures are pre-existing
+            if baseline_enabled:
+                current_ids = test_result.get("failure_ids", [])
+                net_new, baseline_present = diff_test_failures(
+                    current_ids, baseline_ids, known_ids, exit_code_failed=not success,
+                )
+                if not net_new:
+                    warnings = baseline_warnings.copy()
+                    if baseline_present:
+                        warnings.append(
+                            f"Ignored {len(baseline_present)} pre-existing test failure(s): "
+                            + ", ".join(baseline_present[:5])
+                            + ("..." if len(baseline_present) > 5 else "")
+                        )
+                    return PhaseResult(
+                        success=True,
+                        cost_usd=self.context.phase_costs.get(self.name, 0.0),
+                        artifacts={
+                            "iterations": iteration + 1,
+                            "test_results": test_result,
+                            "baseline_failures_present": baseline_present,
+                        },
+                        warnings=warnings,
+                    )
 
             # Extract error fingerprints for cycle detection
             current_errors = LintCheckPhase._parse_error_locations(output)
@@ -809,7 +869,11 @@ class TestExecutionPhase(Phase):
                         success=False,
                         cost_usd=self.context.phase_costs.get(self.name, 0.0),
                         error="Test fix oscillation detected — same errors recurring",
-                        artifacts={"test_results": test_result, "output": output},
+                        artifacts={
+                            "test_results": test_result,
+                            "output": output,
+                            "baseline_warnings": baseline_warnings,
+                        },
                         failure_category=FailureCategory.OSCILLATING,
                     )
 
@@ -822,7 +886,11 @@ class TestExecutionPhase(Phase):
                             success=False,
                             cost_usd=self.context.phase_costs.get(self.name, 0.0),
                             error="Test fix stagnation — no errors resolved across 2 iterations",
-                            artifacts={"test_results": test_result, "output": output},
+                            artifacts={
+                                "test_results": test_result,
+                                "output": output,
+                                "baseline_warnings": baseline_warnings,
+                            },
                             failure_category=FailureCategory.OSCILLATING,
                         )
 
@@ -840,18 +908,82 @@ class TestExecutionPhase(Phase):
                         success=False,
                         cost_usd=self.context.phase_costs.get(self.name, 0.0),
                         error="Unable to fix test failures",
-                        artifacts={"test_results": test_result, "output": output},
+                        artifacts={
+                            "test_results": test_result,
+                            "output": output,
+                            "baseline_warnings": baseline_warnings,
+                        },
                     )
 
         return PhaseResult(
             success=False,
             cost_usd=self.context.phase_costs.get(self.name, 0.0),
             error=f"Tests still failing after {max_iterations} iterations",
-            artifacts={"test_results": test_result, "output": stdout + stderr},
+            artifacts={
+                "test_results": test_result,
+                "output": stdout + stderr,
+                "baseline_warnings": baseline_warnings,
+            },
         )
 
+    def _capture_baseline(self, workdir: Path, test_cmd: str) -> tuple[list[str] | None, str | None]:
+        """Run tests on the clean base-branch state to capture pre-existing failures.
+
+        Stashes all uncommitted changes (implementation, test-writing, etc.),
+        runs the test command on the pristine base, then restores the stash.
+        This ensures the baseline reflects the state *before* the task's changes,
+        so task-introduced failures are never mislabeled as pre-existing.
+
+        Stores in context artifact so subsequent calls (retries, resume) reuse
+        the cached result.
+        """
+        existing = self.context.get_artifact("test_baseline_failures", None)
+        if existing is not None:
+            return existing, None  # Already captured (retry, resume, etc.)
+
+        # Stash all changes (including untracked) to test on clean base
+        stash_ok, _, stash_err = run_command(
+            workdir, "git stash push --include-untracked -m sa-baseline-capture", timeout=30,
+        )
+        if not stash_ok:
+            detail = stash_err.strip() or "unknown error"
+            return (
+                None,
+                "Baseline capture skipped: failed to stash local changes "
+                f"({detail}); continuing in strict test mode.",
+            )
+
+        try:
+            success, stdout, stderr = run_command(workdir, test_cmd, timeout=300)
+            output = stdout + stderr
+            test_result = parse_test_output(output)
+            baseline = test_result.get("failure_ids", [])
+        finally:
+            # Always restore the stash, even if tests crash
+            if stash_ok:
+                pop_ok, pop_stdout, pop_stderr = run_command(workdir, "git stash pop", timeout=30)
+                if not pop_ok:
+                    detail = (pop_stdout + pop_stderr).strip() or "unknown error"
+                    raise RuntimeError(
+                        "Baseline capture failed: could not restore stashed changes "
+                        f"after baseline run ({detail})"
+                    )
+
+        self.context.set_artifact("test_baseline_failures", baseline)
+        self.context.set_artifact("test_baseline_exit_ok", success)
+        return baseline, None
+
     def _run_with_claude_detection(self) -> PhaseResult:
-        """Let Claude detect and run tests."""
+        """Let Claude detect and run tests.
+
+        **Limitation — no baseline diffing**: This fallback delegates test
+        detection, execution, and failure interpretation entirely to Claude.
+        Because there is no structured command to capture a baseline from,
+        baseline-diff resilience does not apply here. Pre-existing failures
+        may cause this path to fail even if no net-new regressions exist.
+        This path is only taken when no test command can be auto-detected
+        or overridden via config.
+        """
         prompt = """
 Detect and run the project's tests:
 
@@ -1410,18 +1542,43 @@ class FinalVerificationPhase(Phase):
 
     def run(self) -> PhaseResult:
         workdir = self.context.get_working_dir()
+        warnings: list[str] = []
 
         # Run tests one more time
         test_cmd = get_command(workdir, "test", self.config.commands.test)
         if test_cmd:
             success, stdout, stderr = run_command(workdir, test_cmd, timeout=300)
             if not success:
-                return PhaseResult(
-                    success=False,
-                    error=f"Final test verification failed:\n{stdout}\n{stderr}",
-                )
+                # Check baseline diff before failing
+                phase_config = self.get_phase_config()
+                baseline_ids = self.context.get_artifact("test_baseline_failures", None)
+                if baseline_ids is not None and phase_config.baseline_enabled:
+                    output = stdout + stderr
+                    test_result = parse_test_output(output)
+                    current_ids = test_result.get("failure_ids", [])
+                    known_ids = load_known_failures(workdir)
+                    net_new, baseline_present = diff_test_failures(
+                        current_ids, baseline_ids, known_ids, exit_code_failed=True,
+                    )
+                    if not net_new:
+                        if baseline_present:
+                            warnings.append(
+                                f"Final verification: ignored {len(baseline_present)} "
+                                f"pre-existing test failure(s)"
+                            )
+                    else:
+                        return PhaseResult(
+                            success=False,
+                            error=f"Final test verification failed with net-new failures:\n"
+                            + "\n".join(net_new[:10]),
+                        )
+                else:
+                    return PhaseResult(
+                        success=False,
+                        error=f"Final test verification failed:\n{stdout}\n{stderr}",
+                    )
 
-        # Run build if available
+        # Run build if available (build failures remain strict — no baseline tolerance)
         build_cmd = get_command(workdir, "build", self.config.commands.build)
         if build_cmd:
             success, stdout, stderr = run_command(workdir, build_cmd, timeout=300)
@@ -1434,6 +1591,7 @@ class FinalVerificationPhase(Phase):
         return PhaseResult(
             success=True,
             artifacts={"test_passed": True, "build_passed": build_cmd is not None},
+            warnings=warnings,
         )
 
 

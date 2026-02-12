@@ -564,6 +564,13 @@ class Orchestrator:
             for key, value in last_result.artifacts.items():
                 self.context.set_artifact(f"{phase_name}_{key}", value)
 
+            # Accumulate warnings for workflow-level reporting
+            if last_result.warnings:
+                existing_warnings = self.context.get_artifact("workflow_warnings", [])
+                for w in last_result.warnings:
+                    existing_warnings.append(f"[{phase_name}] {w}")
+                self.context.set_artifact("workflow_warnings", existing_warnings)
+
             self.notifier.on_phase_complete(phase_name, last_result)
             self.logger.log(
                 "phase_completed",
@@ -571,6 +578,7 @@ class Orchestrator:
                 data={
                     "cost_usd": last_result.cost_usd,
                     "artifacts": list(last_result.artifacts.keys()),
+                    "warnings": last_result.warnings or None,
                 },
             )
 

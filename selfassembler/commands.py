@@ -316,6 +316,111 @@ def run_command(
         return False, "", f"Command failed: {e}"
 
 
+def extract_failure_ids(failure_lines: list[str]) -> list[str]:
+    """Extract structured test IDs from failure lines.
+
+    Parses framework-specific patterns to extract fully-qualified test IDs.
+    Lines that don't match any pattern are included verbatim as IDs so they
+    still participate in baseline diffing.
+
+    Supported formats:
+    - pytest: ``FAILED path/test.py::Class::test_name - reason``
+    - go: ``--- FAIL: TestName/SubTest (0.01s)``
+    - cargo: ``test mod::path::test_name ... FAILED``
+    - jest: ``FAIL src/file.test.js > Suite > test name``
+    """
+    import re
+
+    ids: list[str] = []
+    seen: set[str] = set()
+
+    for line in failure_lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        fid: str | None = None
+
+        # pytest: "FAILED path/test.py::Class::test_name - reason"
+        # Also matches short summary lines like "FAILED path/test.py::test_name"
+        m = re.match(r"FAILED\s+([\w/\\.:]+(?:::\w+)+)", stripped)
+        if m:
+            fid = m.group(1)
+
+        # go: "--- FAIL: TestName/SubTest (0.01s)"
+        if fid is None:
+            m = re.match(r"---\s+FAIL:\s+(\S+)", stripped)
+            if m:
+                fid = m.group(1)
+
+        # cargo: "test mod::path::test_name ... FAILED"
+        if fid is None:
+            m = re.match(r"test\s+([\w:]+)\s+\.\.\.\s+FAILED", stripped)
+            if m:
+                fid = m.group(1)
+
+        # jest: "FAIL src/file.test.js > Suite > test name"
+        if fid is None:
+            m = re.match(r"FAIL\s+(.+)", stripped)
+            if m:
+                fid = m.group(1).strip()
+
+        # Fallback: use the raw line verbatim as the ID
+        if fid is None:
+            fid = stripped
+
+        if fid not in seen:
+            seen.add(fid)
+            ids.append(fid)
+
+    return ids
+
+
+def load_known_failures(workdir: Path) -> list[str]:
+    """Load known test failure IDs from ``.sa-known-failures`` in *workdir*.
+
+    The file contains one test ID per line. Lines starting with ``#`` and
+    blank lines are ignored.
+    """
+    known_file = workdir / ".sa-known-failures"
+    if not known_file.exists():
+        return []
+
+    ids: list[str] = []
+    for raw in known_file.read_text().splitlines():
+        line = raw.strip()
+        if line and not line.startswith("#"):
+            ids.append(line)
+    return ids
+
+
+def diff_test_failures(
+    current_ids: list[str],
+    baseline_ids: list[str],
+    known_ids: list[str] | None,
+    exit_code_failed: bool,
+) -> tuple[list[str], list[str]]:
+    """Diff current test failures against baseline and known-failures lists.
+
+    Returns ``(net_new, baseline_present)`` where *net_new* are failures not
+    present in either the baseline or the known-failures file, and
+    *baseline_present* are failures that were already expected.
+
+    **Strict fallback**: if the exit code was non-zero but no parseable IDs
+    were extracted at all (e.g. import errors, collection crashes), a single
+    sentinel entry is returned in *net_new* to force a hard failure.
+    """
+    allowed = set(baseline_ids) | set(known_ids or [])
+    net_new = [fid for fid in current_ids if fid not in allowed]
+    baseline_present = [fid for fid in current_ids if fid in allowed]
+
+    # STRICT FALLBACK: non-zero exit + no parseable IDs at all → hard fail
+    if exit_code_failed and not current_ids:
+        net_new = ["<unparseable test failure — non-zero exit with no structured IDs>"]
+
+    return net_new, baseline_present
+
+
 def parse_test_output(output: str) -> dict[str, Any]:
     """
     Parse test output to extract pass/fail information.
@@ -323,12 +428,13 @@ def parse_test_output(output: str) -> dict[str, Any]:
     This is a basic implementation that can be extended for
     more sophisticated parsing based on test framework.
     """
-    result = {
+    result: dict[str, Any] = {
         "passed": 0,
         "failed": 0,
         "skipped": 0,
         "total": 0,
         "failures": [],
+        "failure_ids": [],
         "all_passed": False,
     }
 
@@ -367,10 +473,11 @@ def parse_test_output(output: str) -> dict[str, Any]:
                 result["failed"] = int(failed.group(1))
 
         # Capture failure messages
-        if "FAILED" in line or "FAIL " in line or "Error:" in line:
+        if "FAILED" in line or "FAIL " in line or "FAIL:" in line or "Error:" in line:
             result["failures"].append(line.strip())
 
     result["total"] = result["passed"] + result["failed"] + result["skipped"]
     result["all_passed"] = result["failed"] == 0 and result["total"] > 0
+    result["failure_ids"] = extract_failure_ids(result["failures"])
 
     return result
