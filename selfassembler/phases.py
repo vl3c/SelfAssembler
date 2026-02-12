@@ -801,30 +801,32 @@ class TestExecutionPhase(Phase):
             # Extract error fingerprints for cycle detection
             current_errors = LintCheckPhase._parse_error_locations(output)
 
-            if current_errors in error_history:
-                run_command(workdir, "git checkout -- .", timeout=30)
-                return PhaseResult(
-                    success=False,
-                    cost_usd=self.context.phase_costs.get(self.name, 0.0),
-                    error="Test fix oscillation detected — same errors recurring",
-                    artifacts={"test_results": test_result, "output": output},
-                    failure_category=FailureCategory.OSCILLATING,
-                )
-
-            if len(error_history) >= 2:
-                prev = error_history[-1]
-                resolved = prev - current_errors
-                if not resolved:
+            # Only run cycle/stagnation detection when we have parseable fingerprints
+            if current_errors:
+                if current_errors in error_history:
                     run_command(workdir, "git checkout -- .", timeout=30)
                     return PhaseResult(
                         success=False,
                         cost_usd=self.context.phase_costs.get(self.name, 0.0),
-                        error="Test fix stagnation — no errors resolved across 2 iterations",
+                        error="Test fix oscillation detected — same errors recurring",
                         artifacts={"test_results": test_result, "output": output},
                         failure_category=FailureCategory.OSCILLATING,
                     )
 
-            error_history.append(current_errors)
+                if len(error_history) >= 2:
+                    prev = error_history[-1]
+                    resolved = prev - current_errors
+                    if not resolved:
+                        run_command(workdir, "git checkout -- .", timeout=30)
+                        return PhaseResult(
+                            success=False,
+                            cost_usd=self.context.phase_costs.get(self.name, 0.0),
+                            error="Test fix stagnation — no errors resolved across 2 iterations",
+                            artifacts={"test_results": test_result, "output": output},
+                            failure_category=FailureCategory.OSCILLATING,
+                        )
+
+                error_history.append(current_errors)
 
             # Fix failures (except on last iteration)
             if iteration < max_iterations - 1:
@@ -1120,24 +1122,26 @@ class LintCheckPhase(Phase):
 
                 current_errors = self._parse_error_locations(output)
 
-                # Cycle detection: exact repeat
-                if current_errors in error_history:
-                    run_command(workdir, "git checkout -- .", timeout=30)
-                    lint_success = False
-                    lint_failure_category = FailureCategory.OSCILLATING
-                    break
-
-                # Stagnation detection: no errors resolved across 2 consecutive iterations
-                if len(error_history) >= 2:
-                    prev = error_history[-1]
-                    resolved = prev - current_errors
-                    if not resolved:
+                # Only run cycle/stagnation detection when we have parseable fingerprints
+                if current_errors:
+                    # Cycle detection: exact repeat
+                    if current_errors in error_history:
                         run_command(workdir, "git checkout -- .", timeout=30)
                         lint_success = False
                         lint_failure_category = FailureCategory.OSCILLATING
                         break
 
-                error_history.append(current_errors)
+                    # Stagnation detection: no errors resolved across 2 consecutive iterations
+                    if len(error_history) >= 2:
+                        prev = error_history[-1]
+                        resolved = prev - current_errors
+                        if not resolved:
+                            run_command(workdir, "git checkout -- .", timeout=30)
+                            lint_success = False
+                            lint_failure_category = FailureCategory.OSCILLATING
+                            break
+
+                    error_history.append(current_errors)
 
                 # Try to fix lint issues with Claude
                 if iteration < max_iterations - 1:
@@ -1184,22 +1188,23 @@ class LintCheckPhase(Phase):
 
                 current_errors = self._parse_error_locations(output)
 
-                if current_errors in error_history:
-                    run_command(workdir, "git checkout -- .", timeout=30)
-                    typecheck_success = False
-                    typecheck_failure_category = FailureCategory.OSCILLATING
-                    break
-
-                if len(error_history) >= 2:
-                    prev = error_history[-1]
-                    resolved = prev - current_errors
-                    if not resolved:
+                if current_errors:
+                    if current_errors in error_history:
                         run_command(workdir, "git checkout -- .", timeout=30)
                         typecheck_success = False
                         typecheck_failure_category = FailureCategory.OSCILLATING
                         break
 
-                error_history.append(current_errors)
+                    if len(error_history) >= 2:
+                        prev = error_history[-1]
+                        resolved = prev - current_errors
+                        if not resolved:
+                            run_command(workdir, "git checkout -- .", timeout=30)
+                            typecheck_success = False
+                            typecheck_failure_category = FailureCategory.OSCILLATING
+                            break
+
+                    error_history.append(current_errors)
 
                 if iteration < max_iterations - 1:
                     run_command(workdir, "git add -A", timeout=30)

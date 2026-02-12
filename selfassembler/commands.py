@@ -76,16 +76,9 @@ PROJECT_COMMANDS: dict[str, dict[str, list[str]]] = {
 }
 
 
-# Map of tool prefixes that support file arguments for diff-scoped linting
-_SCOPABLE_TOOLS = {
-    "mypy": lambda base, files: f"{base} {files}",
-    "pyright": lambda base, files: f"{base} {files}",
-    "ruff check": lambda _base, files: f"ruff check {files}",
-    "flake8": lambda _base, files: f"flake8 {files}",
-    "eslint": lambda _base, files: f"eslint {files}",
-}
-
-_EXTENSION_MAP = {
+# Tools that accept file arguments for diff-scoped linting.
+# Each entry maps a tool prefix to the file extensions it handles.
+_SCOPABLE_TOOLS: dict[str, set[str]] = {
     "mypy": {".py"},
     "pyright": {".py"},
     "ruff check": {".py"},
@@ -97,16 +90,18 @@ _EXTENSION_MAP = {
 def scope_command_to_files(cmd: str, changed_files: list[str], workdir: Path) -> str | None:
     """Scope a lint/typecheck command to only changed files, if supported.
 
+    Preserves all original flags/options and only replaces the trailing
+    path target (typically ``"."``) with the list of changed files.
+
     Returns the scoped command, or None to fall back to full-project run.
     """
     if not changed_files:
         return None
 
-    for prefix, builder in _SCOPABLE_TOOLS.items():
+    for prefix, exts in _SCOPABLE_TOOLS.items():
         if not cmd.startswith(prefix):
             continue
         # Filter to relevant extensions and existing files
-        exts = _EXTENSION_MAP.get(prefix, set())
         relevant = [
             f for f in changed_files
             if any(f.endswith(ext) for ext in exts) and (workdir / f).exists()
@@ -114,7 +109,11 @@ def scope_command_to_files(cmd: str, changed_files: list[str], workdir: Path) ->
         if not relevant:
             return None  # No relevant changed files
         quoted = " ".join(shlex.quote(f) for f in relevant)
-        return builder(prefix, quoted)
+        # Replace trailing "." target with file list, preserving all flags
+        if cmd.rstrip().endswith(" ."):
+            return cmd.rstrip()[:-1] + quoted
+        # No trailing "." — append files to the original command as-is
+        return cmd.rstrip() + " " + quoted
 
     return None  # Tool not scopable
 

@@ -643,6 +643,7 @@ def main(args: list[str] | None = None) -> int:
             # Apply CLI overrides on top of snapshot config
             if parsed.budget:
                 orchestrator.config.budget_limit_usd = parsed.budget
+                orchestrator.context.budget_limit_usd = parsed.budget
             if parsed.no_approvals or parsed.autonomous:
                 orchestrator.config.approvals.enabled = False
             if parsed.autonomous:
@@ -653,6 +654,12 @@ def main(args: list[str] | None = None) -> int:
                 orchestrator.config.streaming.enabled = False
             if parsed.debug:
                 orchestrator.config.streaming.debug = parsed.debug
+
+            # Recreate executor so streaming/debug overrides take effect
+            if parsed.no_stream or parsed.debug:
+                orchestrator.executor = orchestrator._create_executor(
+                    orchestrator.context.repo_path,
+                )
 
             print(f"Resuming from checkpoint: {parsed.resume}")
             print(f"Task: {orchestrator.context.task_name}")
