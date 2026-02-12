@@ -531,6 +531,7 @@ class Orchestrator:
                     "success": result.success,
                     "cost_usd": result.cost_usd,
                     "error": result.error[:500] if result.error else None,
+                    "failure_category": str(result.failure_category) if result.failure_category else None,
                 },
                 output=str(result.artifacts) if result.artifacts else None,
             )
@@ -540,6 +541,13 @@ class Orchestrator:
 
             if result.success:
                 break
+
+            # Category-based retry decision
+            from selfassembler.errors import FailureCategory
+
+            if result.failure_category in (FailureCategory.FATAL, FailureCategory.OSCILLATING):
+                self.notifier.on_phase_failed(phase_name, result, will_retry=False)
+                break  # No point retrying
 
             # If not the last attempt, log and retry
             if attempt < max_retries:
@@ -571,10 +579,14 @@ class Orchestrator:
                 self._wait_for_approval(phase_name, last_result.artifacts)
 
         else:
+            failure_cat = last_result.failure_category if last_result else None
             self.logger.log(
                 "phase_failed",
                 phase=phase_name,
-                data={"error": last_result.error if last_result else "No result"},
+                data={
+                    "error": last_result.error if last_result else "No result",
+                    "failure_category": str(failure_cat) if failure_cat else None,
+                },
             )
             raise PhaseFailedError(
                 phase_name,

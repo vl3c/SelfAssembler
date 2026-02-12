@@ -30,6 +30,7 @@ class PhaseResult:
     artifacts: dict[str, Any] = field(default_factory=dict)
     timed_out: bool = False
     session_id: str | None = None
+    failure_category: Any = None  # FailureCategory | None
 
 
 class Phase(ABC):
