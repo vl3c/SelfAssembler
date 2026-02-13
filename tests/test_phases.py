@@ -368,6 +368,56 @@ class TestDangerousModeConfig:
         assert phase._dangerous_mode() is True
 
 
+class TestLintCheckSoftFail:
+    """Tests for lint_check soft-fail behavior."""
+
+    @pytest.fixture
+    def context(self) -> WorkflowContext:
+        """Create a workflow context for testing."""
+        return WorkflowContext(
+            task_description="Test",
+            task_name="test",
+            repo_path=Path("/test/repo"),
+            plans_dir=Path("/test/repo/plans"),
+        )
+
+    @pytest.fixture
+    def executor(self) -> MockClaudeExecutor:
+        """Create a mock executor."""
+        return MockClaudeExecutor()
+
+    def test_soft_fail_returns_success_and_warning(
+        self, context: WorkflowContext, executor: MockClaudeExecutor
+    ):
+        """Test that lint_check soft_fail returns success with warning context."""
+        from selfassembler.phases import LintCheckPhase
+
+        config = WorkflowConfig()
+        config.phases.lint_check.max_iterations = 1
+        config.phases.lint_check.soft_fail = True
+        phase = LintCheckPhase(context, executor, config)
+
+        def _mock_get_command(_workdir: Path, command_type: str, *_args: object) -> str | None:
+            if command_type == "lint":
+                return "ruff check ."
+            return None
+
+        with patch("selfassembler.phases.get_command", side_effect=_mock_get_command), \
+             patch("selfassembler.phases.GitManager") as mock_git_manager, \
+             patch(
+                 "selfassembler.phases.run_command",
+                 return_value=(False, "app.py:1: error: E999 boom", ""),
+             ):
+            mock_git_manager.return_value.get_changed_files.return_value = []
+            result = phase.run()
+
+        assert result.success is True
+        assert "soft_fail_warnings" in result.artifacts
+        assert "lint_iter_1" in result.artifacts["soft_fail_warnings"]
+        assert len(result.warnings) == 1
+        assert "Lint/typecheck issues remain" in result.warnings[0]
+
+
 class TestTestExecutionBaselineDiff:
     """Tests for TestExecutionPhase baseline-diff behavior."""
 

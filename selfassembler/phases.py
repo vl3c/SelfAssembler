@@ -1182,13 +1182,34 @@ Focus on fixing actual bugs and security issues first.
 
 
 class LintCheckPhase(Phase):
-    """Run linting and type checking."""
+    """Run linting and type checking.
+
+    When a secondary executor is available, fix iterations alternate between
+    primary and secondary agents (P→S→P→S) so a fresh perspective can
+    resolve issues the other agent introduced or missed.
+    """
 
     name = "lint_check"
     fresh_context = True  # Fresh eyes for mechanical fixes without prior assumptions
     allowed_tools = ["Bash", "Read", "Edit"]
     max_turns = 20
     timeout_seconds = 300
+
+    def __init__(
+        self,
+        context: "WorkflowContext",
+        executor: "AgentExecutor",
+        config: "WorkflowConfig",
+        secondary_executor: "AgentExecutor | None" = None,
+    ):
+        super().__init__(context, executor, config)
+        self.secondary_executor = secondary_executor
+
+    def _get_executor_for_iteration(self, iteration: int) -> "AgentExecutor":
+        """Alternate between primary (even) and secondary (odd) executors."""
+        if self.secondary_executor and iteration % 2 == 1:
+            return self.secondary_executor
+        return self.executor
 
     def run(self) -> PhaseResult:
         from selfassembler.errors import FailureCategory
@@ -1231,19 +1252,24 @@ class LintCheckPhase(Phase):
             success, stdout, stderr = run_command(workdir, format_cmd, timeout=120)
             results.append({"command": "format", "success": success, "output": stdout + stderr})
 
-        # Run lint with iterative fix loop + cycle detection
+        # Run lint with iterative fix loop + cycle detection.
+        # When a secondary executor is available, iterations alternate agents
+        # (P→S→P→S) so each gets a fresh perspective on the other's work.
         lint_success = True
         lint_failure_category = None
         if lint_cmd:
             error_history: list[frozenset[str]] = []
-            fix_session_id: str | None = None
+            # Per-executor session ids so each agent keeps its own conversation
+            fix_sessions: dict[int, str | None] = {0: None, 1: None}
 
             for iteration in range(max_iterations):
                 success, stdout, stderr = run_command(workdir, lint_cmd, timeout=120)
                 output = stdout + stderr
+                cur_executor = self._get_executor_for_iteration(iteration)
+                agent_tag = "secondary" if cur_executor is self.secondary_executor else "primary"
                 results.append(
                     {
-                        "command": f"lint_iter_{iteration + 1}",
+                        "command": f"lint_iter_{iteration + 1}({agent_tag})",
                         "success": success,
                         "output": output,
                     }
@@ -1276,7 +1302,7 @@ class LintCheckPhase(Phase):
 
                     error_history.append(current_errors)
 
-                # Try to fix lint issues with Claude
+                # Try to fix lint issues — alternate agents
                 if iteration < max_iterations - 1:
                     # Stage current state as savepoint before fix attempt
                     run_command(workdir, "git add -A", timeout=30)
@@ -1285,11 +1311,13 @@ class LintCheckPhase(Phase):
                     new_errors = current_errors - (error_history[-2] if len(error_history) >= 2 else frozenset())
                     fixed_errors = (error_history[-2] if len(error_history) >= 2 else frozenset()) - current_errors
 
-                    fix_session_id = self._fix_lint_issues(
-                        output, session_id=fix_session_id,
+                    slot = iteration % 2
+                    fix_sessions[slot] = self._fix_lint_issues(
+                        output, session_id=fix_sessions[slot],
                         new_errors=new_errors, fixed_errors=fixed_errors,
+                        executor=cur_executor,
                     )
-                    if fix_session_id is None:
+                    if fix_sessions[slot] is None:
                         # Fix attempt failed — restore staged savepoint
                         run_command(workdir, "git checkout -- .", timeout=30)
                         lint_success = False
@@ -1297,19 +1325,21 @@ class LintCheckPhase(Phase):
                 else:
                     lint_success = False
 
-        # Run typecheck with iterative fix loop + cycle detection
+        # Run typecheck with iterative fix loop + cycle detection (alternating agents)
         typecheck_success = True
         typecheck_failure_category = None
         if typecheck_cmd:
             error_history = []
-            fix_session_id = None
+            fix_sessions = {0: None, 1: None}
 
             for iteration in range(max_iterations):
                 success, stdout, stderr = run_command(workdir, typecheck_cmd, timeout=180)
                 output = stdout + stderr
+                cur_executor = self._get_executor_for_iteration(iteration)
+                agent_tag = "secondary" if cur_executor is self.secondary_executor else "primary"
                 results.append(
                     {
-                        "command": f"typecheck_iter_{iteration + 1}",
+                        "command": f"typecheck_iter_{iteration + 1}({agent_tag})",
                         "success": success,
                         "output": output,
                     }
@@ -1345,11 +1375,13 @@ class LintCheckPhase(Phase):
                     new_errors = current_errors - (error_history[-2] if len(error_history) >= 2 else frozenset())
                     fixed_errors = (error_history[-2] if len(error_history) >= 2 else frozenset()) - current_errors
 
-                    fix_session_id = self._fix_type_issues(
-                        output, session_id=fix_session_id,
+                    slot = iteration % 2
+                    fix_sessions[slot] = self._fix_type_issues(
+                        output, session_id=fix_sessions[slot],
                         new_errors=new_errors, fixed_errors=fixed_errors,
+                        executor=cur_executor,
                     )
-                    if fix_session_id is None:
+                    if fix_sessions[slot] is None:
                         run_command(workdir, "git checkout -- .", timeout=30)
                         typecheck_success = False
                         break
@@ -1363,6 +1395,9 @@ class LintCheckPhase(Phase):
             failure_category = lint_failure_category or typecheck_failure_category
 
             if phase_config.soft_fail:
+                warning_msg = (
+                    f"Lint/typecheck issues remain after {max_iterations} iterations:\n{error_msg}"
+                )
                 print(
                     f"[soft_fail] Lint/typecheck issues remain after {max_iterations}"
                     f" iterations, continuing:\n{error_msg}"
@@ -1370,6 +1405,7 @@ class LintCheckPhase(Phase):
                 return PhaseResult(
                     success=True,
                     artifacts={"results": results, "soft_fail_warnings": error_msg},
+                    warnings=[warning_msg],
                 )
 
             return PhaseResult(
