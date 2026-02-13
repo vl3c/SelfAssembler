@@ -639,6 +639,11 @@ class DebateOrchestrator:
         dangerous_mode: bool,
     ) -> SynthesisResult:
         """Run Turn 3: Synthesis by primary agent."""
+        # Remove stale output so SynthesisResult.success only passes
+        # when the agent actually writes a new file during this run.
+        if final_output_file.exists():
+            final_output_file.unlink()
+
         # Read the debate transcript
         debate_transcript = debate_file.read_text() if debate_file.exists() else ""
 

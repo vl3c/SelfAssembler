@@ -78,16 +78,25 @@ def _mock_executor(name: str = "claude", results=None):
     return mock
 
 
-def _ensure_final_output(file_manager, phase_file_name="research"):
-    """Pre-create the final output file so SynthesisResult.success passes.
+def _with_synthesis_write(results, file_manager, phase_file_name="research"):
+    """Wrap a result list so the final (synthesis) call also writes the output file.
 
-    Mock executors don't write files, but SynthesisResult.success now checks
-    that the output file exists on disk.
+    ``_run_synthesis`` deletes any stale output file before calling the
+    executor, so pre-creating the file doesn't work.  This wrapper makes the
+    last mock call write the file — just like a real agent would.
     """
     final = file_manager.get_final_output_path(phase_file_name)
-    final.parent.mkdir(parents=True, exist_ok=True)
-    final.write_text("mock synthesis output")
-    return final
+    call_idx = [0]
+
+    def _side_effect(**_kwargs):
+        i = call_idx[0]
+        call_idx[0] += 1
+        if i == len(results) - 1:
+            final.parent.mkdir(parents=True, exist_ok=True)
+            final.write_text("mock synthesis output")
+        return results[i]
+
+    return _side_effect
 
 
 # ---------------------------------------------------------------------------
@@ -103,12 +112,13 @@ class TestFeedbackModeOrchestration:
     ):
         """Verify the 3-step feedback flow calls the right executors."""
         config = DebateConfig(enabled=True, mode="feedback")
-        _ensure_final_output(file_manager)
 
-        primary_exec = _mock_executor("claude", results=[
+        primary_results = [
             _make_exec_result(session_id="primary-t1", output="primary analysis"),
             _make_exec_result(session_id="synthesis", output="final output"),
-        ])
+        ]
+        primary_exec = MagicMock()
+        primary_exec.execute.side_effect = _with_synthesis_write(primary_results, file_manager)
         secondary_exec = _mock_executor("codex", results=[
             _make_exec_result(session_id="secondary-feedback", output="feedback notes"),
         ])
@@ -305,15 +315,16 @@ class TestFullDebateModeOrchestration:
     ):
         """Debate low (3 msgs): T1 primary + T1 secondary + 3 exchange msgs + synthesis."""
         config = DebateConfig(enabled=True, mode="debate", intensity="low")
-        _ensure_final_output(file_manager)
 
         # T1 primary, exchange msg 1 (primary), exchange msg 3 (primary), synthesis
-        primary_exec = _mock_executor("claude", results=[
+        primary_results = [
             _make_exec_result(session_id="p-t1"),
             _make_exec_result(session_id="p-msg1"),
             _make_exec_result(session_id="p-msg3"),
             _make_exec_result(session_id="p-synth"),
-        ])
+        ]
+        primary_exec = MagicMock()
+        primary_exec.execute.side_effect = _with_synthesis_write(primary_results, file_manager)
         # T1 secondary, exchange msg 2 (secondary)
         secondary_exec = _mock_executor("codex", results=[
             _make_exec_result(session_id="s-t1"),
@@ -332,12 +343,13 @@ class TestFullDebateModeOrchestration:
     def test_debate_high_exchanges_5_messages(self, context, file_manager, prompt_gen):
         """Debate high (5 msgs): T1 x2 + 5 exchange msgs + synthesis = 8 total calls."""
         config = DebateConfig(enabled=True, mode="debate", intensity="high")
-        _ensure_final_output(file_manager)
 
         # Primary: T1 + msg1 + msg3 + msg5 + synthesis = 5
-        primary_exec = _mock_executor("claude", results=[
+        primary_results = [
             _make_exec_result(session_id=f"p-{i}") for i in range(5)
-        ])
+        ]
+        primary_exec = MagicMock()
+        primary_exec.execute.side_effect = _with_synthesis_write(primary_results, file_manager)
         # Secondary: T1 + msg2 + msg4 = 3
         secondary_exec = _mock_executor("codex", results=[
             _make_exec_result(session_id=f"s-{i}") for i in range(3)
@@ -479,8 +491,6 @@ class TestFullDebateModeOrchestration:
         config = DebateConfig(
             enabled=True, mode="debate", intensity="low", parallel_turn_1=False,
         )
-        _ensure_final_output(file_manager)
-
         call_order = []
 
         def primary_execute(**kwargs):
@@ -491,13 +501,14 @@ class TestFullDebateModeOrchestration:
             call_order.append("secondary")
             return _make_exec_result(session_id="s")
 
-        primary_exec = MagicMock()
-        primary_exec.execute.side_effect = [
+        primary_results = [
             _make_exec_result(session_id="p-t1"),   # T1
             _make_exec_result(session_id="p-msg1"),  # msg1
             _make_exec_result(session_id="p-msg3"),  # msg3
             _make_exec_result(session_id="p-synth"), # synthesis
         ]
+        primary_exec = MagicMock()
+        primary_exec.execute.side_effect = _with_synthesis_write(primary_results, file_manager)
         secondary_exec = MagicMock()
         secondary_exec.execute.side_effect = [
             _make_exec_result(session_id="s-t1"),   # T1
@@ -681,9 +692,11 @@ class TestTurn1Reuse:
         primary_t1_file.write_text("# Previous research output\nSome analysis...")
 
         # Primary only needs to be called once (synthesis), not twice (T1 + synthesis)
-        primary_exec = _mock_executor("claude", results=[
+        primary_results = [
             _make_exec_result(session_id="synth-sess"),
-        ])
+        ]
+        primary_exec = MagicMock()
+        primary_exec.execute.side_effect = _with_synthesis_write(primary_results, file_manager)
         secondary_exec = _mock_executor("codex", results=[
             _make_exec_result(session_id="fb-sess"),
         ])
@@ -691,7 +704,7 @@ class TestTurn1Reuse:
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
         result = orch.run_debate("research", prompt_gen)
 
-        assert result.success is True or not result.final_output_file.exists()
+        assert result.success is True
         # Primary called only once (synthesis), Turn 1 was skipped
         assert primary_exec.execute.call_count == 1
         # Secondary still called once for feedback
