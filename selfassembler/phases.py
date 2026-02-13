@@ -778,6 +778,7 @@ class TestExecutionPhase(Phase):
 
         phase_config = self.get_phase_config()
         max_iterations = phase_config.max_iterations
+        cmd_timeout = phase_config.command_timeout
         workdir = self.context.get_working_dir()
 
         # Get test command
@@ -794,7 +795,7 @@ class TestExecutionPhase(Phase):
 
         if baseline_enabled:
             try:
-                captured_baseline, baseline_warning = self._capture_baseline(workdir, test_cmd)
+                captured_baseline, baseline_warning = self._capture_baseline(workdir, test_cmd, cmd_timeout)
             except RuntimeError as e:
                 return PhaseResult(
                     success=False,
@@ -818,7 +819,7 @@ class TestExecutionPhase(Phase):
         test_result: dict = {}
 
         for iteration in range(max_iterations):
-            success, stdout, stderr = run_command(workdir, test_cmd, timeout=300)
+            success, stdout, stderr = run_command(workdir, test_cmd, timeout=cmd_timeout)
             output = stdout + stderr
             test_result = parse_test_output(output)
 
@@ -926,7 +927,7 @@ class TestExecutionPhase(Phase):
             },
         )
 
-    def _capture_baseline(self, workdir: Path, test_cmd: str) -> tuple[list[str] | None, str | None]:
+    def _capture_baseline(self, workdir: Path, test_cmd: str, cmd_timeout: int = 300) -> tuple[list[str] | None, str | None]:
         """Run tests on the clean base-branch state to capture pre-existing failures.
 
         Stashes all uncommitted changes (implementation, test-writing, etc.),
@@ -954,7 +955,7 @@ class TestExecutionPhase(Phase):
             )
 
         try:
-            success, stdout, stderr = run_command(workdir, test_cmd, timeout=300)
+            success, stdout, stderr = run_command(workdir, test_cmd, timeout=cmd_timeout)
             output = stdout + stderr
             test_result = parse_test_output(output)
             baseline = test_result.get("failure_ids", [])
@@ -1543,14 +1544,15 @@ class FinalVerificationPhase(Phase):
     def run(self) -> PhaseResult:
         workdir = self.context.get_working_dir()
         warnings: list[str] = []
+        phase_config = self.get_phase_config()
+        cmd_timeout = phase_config.command_timeout
 
         # Run tests one more time
         test_cmd = get_command(workdir, "test", self.config.commands.test)
         if test_cmd:
-            success, stdout, stderr = run_command(workdir, test_cmd, timeout=300)
+            success, stdout, stderr = run_command(workdir, test_cmd, timeout=cmd_timeout)
             if not success:
                 # Check baseline diff before failing
-                phase_config = self.get_phase_config()
                 baseline_ids = self.context.get_artifact("test_baseline_failures", None)
                 if baseline_ids is not None and phase_config.baseline_enabled:
                     output = stdout + stderr
