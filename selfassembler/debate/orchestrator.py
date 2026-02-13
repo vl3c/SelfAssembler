@@ -17,6 +17,7 @@ from selfassembler.debate.results import (
     Turn2Results,
 )
 from selfassembler.debate.transcript import DebateLog
+from selfassembler.executors.base import ExecutionResult
 
 if TYPE_CHECKING:
     from selfassembler.config import DebateConfig
@@ -100,15 +101,22 @@ class DebateOrchestrator:
                 )
 
             # Full debate: Turn 1 parallel independent generation
-            t1_results = self._run_turn_1(
-                phase_name=phase_name,
-                prompt_generator=prompt_generator,
-                primary_output_file=primary_t1_file,
-                secondary_output_file=secondary_t1_file,
-                permission_mode=permission_mode,
-                allowed_tools=allowed_tools,
-                dangerous_mode=dangerous_mode,
-            )
+            # Reuse existing Turn 1 outputs if both files exist on disk (resume case)
+            if (
+                primary_t1_file.exists() and primary_t1_file.stat().st_size > 0
+                and secondary_t1_file.exists() and secondary_t1_file.stat().st_size > 0
+            ):
+                t1_results = self._reuse_existing_turn1(primary_t1_file, secondary_t1_file)
+            else:
+                t1_results = self._run_turn_1(
+                    phase_name=phase_name,
+                    prompt_generator=prompt_generator,
+                    primary_output_file=primary_t1_file,
+                    secondary_output_file=secondary_t1_file,
+                    permission_mode=permission_mode,
+                    allowed_tools=allowed_tools,
+                    dangerous_mode=dangerous_mode,
+                )
 
             # Store Turn 1 session IDs using roles (not agent names) to avoid collisions
             self._store_session_id(phase_name, "primary", 1, t1_results.primary_result.session_id)
@@ -170,15 +178,18 @@ class DebateOrchestrator:
 
         Flow: primary generates → secondary reviews → primary synthesizes.
         """
-        # Step 1: Primary-only Turn 1
-        t1_results = self._run_turn_1_primary_only(
-            phase_name=phase_name,
-            prompt_generator=prompt_generator,
-            primary_output_file=primary_t1_file,
-            permission_mode=permission_mode,
-            allowed_tools=allowed_tools,
-            dangerous_mode=dangerous_mode,
-        )
+        # Step 1: Primary-only Turn 1 (reuse if output already exists on disk)
+        if primary_t1_file.exists() and primary_t1_file.stat().st_size > 0:
+            t1_results = self._reuse_existing_turn1(primary_t1_file)
+        else:
+            t1_results = self._run_turn_1_primary_only(
+                phase_name=phase_name,
+                prompt_generator=prompt_generator,
+                primary_output_file=primary_t1_file,
+                permission_mode=permission_mode,
+                allowed_tools=allowed_tools,
+                dangerous_mode=dangerous_mode,
+            )
 
         self._store_session_id(phase_name, "primary", 1, t1_results.primary_result.session_id)
 
@@ -212,6 +223,51 @@ class DebateOrchestrator:
             turn1=t1_results,
             turn2=t2_results,
             synthesis=synthesis,
+        )
+
+    def _reuse_existing_turn1(
+        self,
+        primary_output_file: Path,
+        secondary_output_file: Path | None = None,
+    ) -> Turn1Results:
+        """Construct Turn1Results from existing output files, skipping agent execution.
+
+        Used on resume when Turn 1 output files already exist on disk from a
+        previous (failed) run.  The placeholder ExecutionResult has zero cost
+        and no session ID, which is safe because:
+        - ``_store_session_id`` short-circuits on empty session_id (line 668)
+        - Synthesis in feedback mode will start a fresh session instead of
+          resuming — an acceptable trade-off vs regenerating 17+ min of work.
+        """
+        placeholder = ExecutionResult(
+            session_id="",
+            output="(reused from previous run)",
+            cost_usd=0.0,
+            duration_ms=0,
+            num_turns=0,
+            is_error=False,
+            raw_output="{}",
+        )
+
+        secondary_result = None
+        if secondary_output_file and secondary_output_file.exists() and secondary_output_file.stat().st_size > 0:
+            secondary_result = ExecutionResult(
+                session_id="",
+                output="(reused from previous run)",
+                cost_usd=0.0,
+                duration_ms=0,
+                num_turns=0,
+                is_error=False,
+                raw_output="{}",
+            )
+
+        return Turn1Results(
+            primary_result=placeholder,
+            secondary_result=secondary_result,
+            primary_output_file=primary_output_file,
+            secondary_output_file=secondary_output_file,
+            primary_agent=self.primary_agent,
+            secondary_agent=self.secondary_agent,
         )
 
     def _run_turn_1_primary_only(
@@ -583,6 +639,11 @@ class DebateOrchestrator:
         dangerous_mode: bool,
     ) -> SynthesisResult:
         """Run Turn 3: Synthesis by primary agent."""
+        # Remove stale output so SynthesisResult.success only passes
+        # when the agent actually writes a new file during this run.
+        if final_output_file.exists():
+            final_output_file.unlink()
+
         # Read the debate transcript
         debate_transcript = debate_file.read_text() if debate_file.exists() else ""
 

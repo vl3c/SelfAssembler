@@ -78,6 +78,27 @@ def _mock_executor(name: str = "claude", results=None):
     return mock
 
 
+def _with_synthesis_write(results, file_manager, phase_file_name="research"):
+    """Wrap a result list so the final (synthesis) call also writes the output file.
+
+    ``_run_synthesis`` deletes any stale output file before calling the
+    executor, so pre-creating the file doesn't work.  This wrapper makes the
+    last mock call write the file — just like a real agent would.
+    """
+    final = file_manager.get_final_output_path(phase_file_name)
+    call_idx = [0]
+
+    def _side_effect(**_kwargs):
+        i = call_idx[0]
+        call_idx[0] += 1
+        if i == len(results) - 1:
+            final.parent.mkdir(parents=True, exist_ok=True)
+            final.write_text("mock synthesis output")
+        return results[i]
+
+    return _side_effect
+
+
 # ---------------------------------------------------------------------------
 # Feedback mode tests
 # ---------------------------------------------------------------------------
@@ -92,16 +113,18 @@ class TestFeedbackModeOrchestration:
         """Verify the 3-step feedback flow calls the right executors."""
         config = DebateConfig(enabled=True, mode="feedback")
 
-        primary_exec = _mock_executor("claude", results=[
+        primary_results = [
             _make_exec_result(session_id="primary-t1", output="primary analysis"),
             _make_exec_result(session_id="synthesis", output="final output"),
-        ])
+        ]
+        primary_exec = MagicMock()
+        primary_exec.execute.side_effect = _with_synthesis_write(primary_results, file_manager)
         secondary_exec = _mock_executor("codex", results=[
             _make_exec_result(session_id="secondary-feedback", output="feedback notes"),
         ])
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        result = orch.run_debate("research", prompt_gen)
+        orch.run_debate("research", prompt_gen)
 
         assert result.success is True
         assert result.phase_name == "research"
@@ -124,7 +147,7 @@ class TestFeedbackModeOrchestration:
         ])
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        result = orch.run_debate("research", prompt_gen)
+        orch.run_debate("research", prompt_gen)
 
         assert result.turn1 is not None
         assert result.turn1.secondary_result is None
@@ -144,7 +167,7 @@ class TestFeedbackModeOrchestration:
         ])
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        result = orch.run_debate("research", prompt_gen)
+        orch.run_debate("research", prompt_gen)
 
         assert result.turn2 is not None
         assert result.turn2.message_count == 1
@@ -251,7 +274,7 @@ class TestFeedbackModeOrchestration:
         ])
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        result = orch.run_debate("research", prompt_gen)
+        orch.run_debate("research", prompt_gen)
 
         assert abs(result.total_cost - 1.10) < 0.001
         assert abs(result.primary_cost - 0.90) < 0.001
@@ -294,12 +317,14 @@ class TestFullDebateModeOrchestration:
         config = DebateConfig(enabled=True, mode="debate", intensity="low")
 
         # T1 primary, exchange msg 1 (primary), exchange msg 3 (primary), synthesis
-        primary_exec = _mock_executor("claude", results=[
+        primary_results = [
             _make_exec_result(session_id="p-t1"),
             _make_exec_result(session_id="p-msg1"),
             _make_exec_result(session_id="p-msg3"),
             _make_exec_result(session_id="p-synth"),
-        ])
+        ]
+        primary_exec = MagicMock()
+        primary_exec.execute.side_effect = _with_synthesis_write(primary_results, file_manager)
         # T1 secondary, exchange msg 2 (secondary)
         secondary_exec = _mock_executor("codex", results=[
             _make_exec_result(session_id="s-t1"),
@@ -307,7 +332,7 @@ class TestFullDebateModeOrchestration:
         ])
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        result = orch.run_debate("research", prompt_gen)
+        orch.run_debate("research", prompt_gen)
 
         assert result.success is True
         # Primary: T1 + msg1 + msg3 + synthesis = 4
@@ -320,16 +345,18 @@ class TestFullDebateModeOrchestration:
         config = DebateConfig(enabled=True, mode="debate", intensity="high")
 
         # Primary: T1 + msg1 + msg3 + msg5 + synthesis = 5
-        primary_exec = _mock_executor("claude", results=[
+        primary_results = [
             _make_exec_result(session_id=f"p-{i}") for i in range(5)
-        ])
+        ]
+        primary_exec = MagicMock()
+        primary_exec.execute.side_effect = _with_synthesis_write(primary_results, file_manager)
         # Secondary: T1 + msg2 + msg4 = 3
         secondary_exec = _mock_executor("codex", results=[
             _make_exec_result(session_id=f"s-{i}") for i in range(3)
         ])
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        result = orch.run_debate("research", prompt_gen)
+        orch.run_debate("research", prompt_gen)
 
         assert result.success is True
         assert primary_exec.execute.call_count == 5
@@ -351,7 +378,7 @@ class TestFullDebateModeOrchestration:
         ])
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        result = orch.run_debate("research", prompt_gen)
+        orch.run_debate("research", prompt_gen)
 
         msgs = result.turn2.messages
         assert len(msgs) == 3
@@ -376,7 +403,7 @@ class TestFullDebateModeOrchestration:
         ])
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        result = orch.run_debate("research", prompt_gen)
+        orch.run_debate("research", prompt_gen)
 
         assert result.turn1.primary_result is not None
         assert result.turn1.secondary_result is not None
@@ -464,7 +491,6 @@ class TestFullDebateModeOrchestration:
         config = DebateConfig(
             enabled=True, mode="debate", intensity="low", parallel_turn_1=False,
         )
-
         call_order = []
 
         def primary_execute(**kwargs):
@@ -475,13 +501,14 @@ class TestFullDebateModeOrchestration:
             call_order.append("secondary")
             return _make_exec_result(session_id="s")
 
-        primary_exec = MagicMock()
-        primary_exec.execute.side_effect = [
+        primary_results = [
             _make_exec_result(session_id="p-t1"),   # T1
             _make_exec_result(session_id="p-msg1"),  # msg1
             _make_exec_result(session_id="p-msg3"),  # msg3
             _make_exec_result(session_id="p-synth"), # synthesis
         ]
+        primary_exec = MagicMock()
+        primary_exec.execute.side_effect = _with_synthesis_write(primary_results, file_manager)
         secondary_exec = MagicMock()
         secondary_exec.execute.side_effect = [
             _make_exec_result(session_id="s-t1"),   # T1
@@ -489,7 +516,7 @@ class TestFullDebateModeOrchestration:
         ]
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        result = orch.run_debate("research", prompt_gen)
+        orch.run_debate("research", prompt_gen)
 
         assert result.success is True
         # Both T1 calls should have happened (sequential, not parallel)
@@ -516,7 +543,7 @@ class TestDebateErrorHandling:
         secondary_exec = _mock_executor("codex")
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        result = orch.run_debate("research", prompt_gen)
+        orch.run_debate("research", prompt_gen)
 
         assert result.success is False
         assert "CLI crashed" in result.error
@@ -534,7 +561,7 @@ class TestDebateErrorHandling:
         ])
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        result = orch.run_debate("research", prompt_gen)
+        orch.run_debate("research", prompt_gen)
 
         # SynthesisResult.success is based on is_error
         assert result.success is False
@@ -643,3 +670,138 @@ class TestPromptIntegration:
         # Synthesis (4th primary call) should be the full synthesis prompt
         synth_prompt = primary_exec.execute.call_args_list[3].kwargs["prompt"]
         assert "Synthesis" in synth_prompt
+
+
+# ---------------------------------------------------------------------------
+# Turn 1 reuse on resume tests
+# ---------------------------------------------------------------------------
+
+
+class TestTurn1Reuse:
+    """Test that existing Turn 1 outputs are reused on resume."""
+
+    def test_feedback_mode_reuses_existing_primary_t1(
+        self, context, file_manager, prompt_gen
+    ):
+        """When primary T1 file already exists, Turn 1 should be skipped."""
+        config = DebateConfig(enabled=True, mode="feedback")
+
+        # Pre-create the primary T1 output file (simulates previous failed run)
+        primary_t1_file = file_manager.get_role_output_path("research", "primary")
+        primary_t1_file.parent.mkdir(parents=True, exist_ok=True)
+        primary_t1_file.write_text("# Previous research output\nSome analysis...")
+
+        # Primary only needs to be called once (synthesis), not twice (T1 + synthesis)
+        primary_results = [
+            _make_exec_result(session_id="synth-sess"),
+        ]
+        primary_exec = MagicMock()
+        primary_exec.execute.side_effect = _with_synthesis_write(primary_results, file_manager)
+        secondary_exec = _mock_executor("codex", results=[
+            _make_exec_result(session_id="fb-sess"),
+        ])
+
+        orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
+        orch.run_debate("research", prompt_gen)
+
+        assert result.success is True
+        # Primary called only once (synthesis), Turn 1 was skipped
+        assert primary_exec.execute.call_count == 1
+        # Secondary still called once for feedback
+        assert secondary_exec.execute.call_count == 1
+        # Turn 1 result should have zero cost (reused)
+        assert result.turn1.primary_result.cost_usd == 0.0
+
+    def test_full_debate_reuses_existing_t1_files(
+        self, context, file_manager, prompt_gen
+    ):
+        """When both T1 files exist, full debate Turn 1 should be skipped."""
+        config = DebateConfig(enabled=True, mode="debate", intensity="low")
+
+        # Pre-create both T1 output files
+        primary_t1_file = file_manager.get_role_output_path("research", "primary")
+        secondary_t1_file = file_manager.get_role_output_path("research", "secondary")
+        primary_t1_file.parent.mkdir(parents=True, exist_ok=True)
+        secondary_t1_file.parent.mkdir(parents=True, exist_ok=True)
+        primary_t1_file.write_text("# Primary research\nAnalysis A")
+        secondary_t1_file.write_text("# Secondary research\nAnalysis B")
+
+        # Primary: msg1 + msg3 + synthesis = 3 (no T1)
+        primary_exec = _mock_executor("claude", results=[
+            _make_exec_result(session_id="p-msg1"),
+            _make_exec_result(session_id="p-msg3"),
+            _make_exec_result(session_id="p-synth"),
+        ])
+        # Secondary: msg2 = 1 (no T1)
+        secondary_exec = _mock_executor("codex", results=[
+            _make_exec_result(session_id="s-msg2"),
+        ])
+
+        orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
+        orch.run_debate("research", prompt_gen)
+
+        # Primary: 3 calls (msg1 + msg3 + synthesis), NOT 4 (T1 + msg1 + msg3 + synthesis)
+        assert primary_exec.execute.call_count == 3
+        # Secondary: 1 call (msg2), NOT 2 (T1 + msg2)
+        assert secondary_exec.execute.call_count == 1
+        # Turn 1 results should have zero cost (reused)
+        assert result.turn1.primary_result.cost_usd == 0.0
+        assert result.turn1.secondary_result.cost_usd == 0.0
+
+    def test_feedback_mode_no_reuse_when_file_empty(
+        self, context, file_manager, prompt_gen
+    ):
+        """An empty T1 file should NOT be reused — Turn 1 must still run."""
+        config = DebateConfig(enabled=True, mode="feedback")
+
+        # Pre-create an empty primary T1 file
+        primary_t1_file = file_manager.get_role_output_path("research", "primary")
+        primary_t1_file.parent.mkdir(parents=True, exist_ok=True)
+        primary_t1_file.write_text("")
+
+        # Primary called twice: Turn 1 (since file is empty) + synthesis
+        primary_exec = _mock_executor("claude", results=[
+            _make_exec_result(session_id="t1-sess"),
+            _make_exec_result(session_id="synth-sess"),
+        ])
+        secondary_exec = _mock_executor("codex", results=[
+            _make_exec_result(session_id="fb-sess"),
+        ])
+
+        orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
+        orch.run_debate("research", prompt_gen)
+
+        # Primary called twice: T1 + synthesis (empty file was not reused)
+        assert primary_exec.execute.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# SynthesisResult.success validation tests
+# ---------------------------------------------------------------------------
+
+
+class TestSynthesisResultSuccess:
+    """Test SynthesisResult.success validates output file existence."""
+
+    def test_synthesis_success_false_when_output_missing(self, tmp_path):
+        """SynthesisResult.success should be False when output file doesn't exist."""
+        from selfassembler.debate.results import SynthesisResult
+
+        missing_file = tmp_path / "nonexistent_output.md"
+        result = SynthesisResult(
+            result=_make_exec_result(is_error=False),
+            output_file=missing_file,
+        )
+        assert result.success is False
+
+    def test_synthesis_success_true_when_output_exists(self, tmp_path):
+        """SynthesisResult.success should be True when file exists and no error."""
+        from selfassembler.debate.results import SynthesisResult
+
+        output_file = tmp_path / "final_output.md"
+        output_file.write_text("# Synthesized output\nContent here.")
+        result = SynthesisResult(
+            result=_make_exec_result(is_error=False),
+            output_file=output_file,
+        )
+        assert result.success is True

@@ -164,7 +164,7 @@ class SynthesisResult:
     @property
     def success(self) -> bool:
         """Check if synthesis succeeded."""
-        return not self.result.is_error
+        return not self.result.is_error and self.output_file.exists()
 
     @property
     def cost_usd(self) -> float:
