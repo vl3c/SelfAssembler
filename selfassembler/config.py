@@ -95,7 +95,8 @@ class PhasesConfig(BaseModel):
     )
     lint_check: PhaseConfig = Field(
         default_factory=lambda: PhaseConfig(
-            timeout=300, max_turns=20, estimated_cost=0.5, max_retries=3
+            timeout=300, max_turns=20, estimated_cost=0.5, max_retries=3,
+            max_iterations=4,  # P→S→P→S when secondary executor available
         )
     )
     documentation: PhaseConfig = Field(
