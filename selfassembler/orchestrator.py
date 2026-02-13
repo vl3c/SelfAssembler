@@ -251,13 +251,13 @@ class Orchestrator:
     def _create_phase(self, phase_class: type[Phase]) -> Phase:
         """Create a phase instance, passing secondary executor if supported.
 
-        For phases that inherit from DebatePhase, the secondary executor
-        is passed to enable multi-agent debate when configured.
+        For phases that inherit from DebatePhase or LintCheckPhase, the
+        secondary executor is passed to enable multi-agent collaboration.
         """
-        from selfassembler.phases import DebatePhase
+        from selfassembler.phases import DebatePhase, LintCheckPhase
 
-        # Check if phase supports debate (has secondary_executor parameter)
-        if issubclass(phase_class, DebatePhase):
+        # Pass secondary executor to phases that support it
+        if issubclass(phase_class, (DebatePhase, LintCheckPhase)):
             return phase_class(
                 context=self.context,
                 executor=self.executor,

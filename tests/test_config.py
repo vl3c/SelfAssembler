@@ -7,6 +7,7 @@ from selfassembler.config import (
     AgentConfig,
     ClaudeConfig,
     GitConfig,
+    PhaseConfig,
     RulesConfig,
     StreamingConfig,
     WorkflowConfig,
@@ -134,6 +135,11 @@ class TestPhaseConfig:
         """Test plan review approval gate is disabled by default."""
         config = WorkflowConfig()
         assert config.approvals.gates.plan_review is False
+
+    def test_soft_fail_default_and_override(self):
+        """Test soft_fail defaults to False and can be set to True."""
+        assert PhaseConfig().soft_fail is False
+        assert PhaseConfig(soft_fail=True).soft_fail is True
 
 
 class TestRulesConfig:

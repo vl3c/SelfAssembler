@@ -59,6 +59,7 @@ class PhaseConfig(BaseModel):
     enabled: bool = Field(default=True)
     baseline_enabled: bool = Field(default=True)  # Capture test baseline for diff-based pass/fail
     command_timeout: int = Field(default=300, ge=10)  # Per-command timeout (seconds) for test/lint runs
+    soft_fail: bool = Field(default=False)  # Warn instead of fail when errors persist after fix attempts
 
 
 class PhasesConfig(BaseModel):
@@ -94,7 +95,8 @@ class PhasesConfig(BaseModel):
     )
     lint_check: PhaseConfig = Field(
         default_factory=lambda: PhaseConfig(
-            timeout=300, max_turns=20, estimated_cost=0.5, max_retries=3
+            timeout=300, max_turns=20, estimated_cost=0.5, max_retries=3,
+            max_iterations=4,  # P→S→P→S when secondary executor available
         )
     )
     documentation: PhaseConfig = Field(
