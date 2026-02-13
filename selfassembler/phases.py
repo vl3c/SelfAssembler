@@ -1361,6 +1361,17 @@ class LintCheckPhase(Phase):
             failed = [r for r in results if not r["success"]]
             error_msg = "\n".join(f"{r['command']}: {r['output'][:500]}" for r in failed[-2:])
             failure_category = lint_failure_category or typecheck_failure_category
+
+            if phase_config.soft_fail:
+                print(
+                    f"[soft_fail] Lint/typecheck issues remain after {max_iterations}"
+                    f" iterations, continuing:\n{error_msg}"
+                )
+                return PhaseResult(
+                    success=True,
+                    artifacts={"results": results, "soft_fail_warnings": error_msg},
+                )
+
             return PhaseResult(
                 success=False,
                 error=f"Lint/typecheck still failing after {max_iterations} iterations:\n{error_msg}",
