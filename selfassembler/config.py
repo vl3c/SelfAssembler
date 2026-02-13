@@ -58,6 +58,7 @@ class PhaseConfig(BaseModel):
     estimated_cost: float = Field(default=1.0, ge=0.0)
     enabled: bool = Field(default=True)
     baseline_enabled: bool = Field(default=True)  # Capture test baseline for diff-based pass/fail
+    command_timeout: int = Field(default=300, ge=10)  # Per-command timeout (seconds) for test/lint runs
 
 
 class PhasesConfig(BaseModel):
