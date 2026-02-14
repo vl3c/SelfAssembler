@@ -254,6 +254,25 @@ class DebateConfig(BaseModel):
     max_unresolved_conflicts: int = Field(default=5)
 
 
+class FallbackConfig(BaseModel):
+    """Configuration for automatic agent fallback on agent-specific failures.
+
+    Fallback is always active when a fallback agent is available.
+    """
+
+    fallback_agent: str | None = None  # Auto-detect if None, or set explicitly (can be same as primary)
+    max_fallback_attempts: int = Field(default=1, ge=0, le=5)
+    trigger: str = "agent_errors"  # "agent_errors" or "all_errors"
+
+    @field_validator("trigger")
+    @classmethod
+    def validate_trigger(cls, v: str) -> str:
+        """Ensure trigger is 'agent_errors' or 'all_errors'."""
+        if v not in ("agent_errors", "all_errors"):
+            raise ValueError(f"trigger must be 'agent_errors' or 'all_errors' (got '{v}')")
+        return v
+
+
 class WorkflowConfig(BaseModel):
     """Main configuration for SelfAssembler workflows."""
 
@@ -271,6 +290,7 @@ class WorkflowConfig(BaseModel):
     streaming: StreamingConfig = Field(default_factory=StreamingConfig)
     rules: RulesConfig = Field(default_factory=RulesConfig)
     debate: DebateConfig = Field(default_factory=DebateConfig)
+    fallback: FallbackConfig = Field(default_factory=FallbackConfig)
     copy_files: list[str] = Field(default_factory=lambda: [".env", ".env.local", ".claude/*"])
 
     @classmethod
