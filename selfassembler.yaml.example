@@ -174,6 +174,15 @@ debate:
     plan_review: true
     code_review: true
 
+# Automatic agent fallback
+# When the primary agent fails with rate limits, token exhaustion, or auth issues,
+# automatically try another available agent.
+# Only applies to simple phases (not debate, lint alternation, or PR phases).
+fallback:
+  fallback_agent: null   # Auto-detect, or set explicitly (e.g., "codex")
+  max_fallback_attempts: 1
+  trigger: agent_errors  # "agent_errors" (conservative) or "all_errors" (aggressive)
+
 # Files to copy to worktree (glob patterns)
 copy_files:
   - ".env"
