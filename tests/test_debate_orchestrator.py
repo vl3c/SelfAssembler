@@ -124,7 +124,7 @@ class TestFeedbackModeOrchestration:
         ])
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        orch.run_debate("research", prompt_gen)
+        result = orch.run_debate("research", prompt_gen)
 
         assert result.success is True
         assert result.phase_name == "research"
@@ -147,7 +147,7 @@ class TestFeedbackModeOrchestration:
         ])
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        orch.run_debate("research", prompt_gen)
+        result = orch.run_debate("research", prompt_gen)
 
         assert result.turn1 is not None
         assert result.turn1.secondary_result is None
@@ -167,7 +167,7 @@ class TestFeedbackModeOrchestration:
         ])
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        orch.run_debate("research", prompt_gen)
+        result = orch.run_debate("research", prompt_gen)
 
         assert result.turn2 is not None
         assert result.turn2.message_count == 1
@@ -274,7 +274,7 @@ class TestFeedbackModeOrchestration:
         ])
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        orch.run_debate("research", prompt_gen)
+        result = orch.run_debate("research", prompt_gen)
 
         assert abs(result.total_cost - 1.10) < 0.001
         assert abs(result.primary_cost - 0.90) < 0.001
@@ -332,7 +332,7 @@ class TestFullDebateModeOrchestration:
         ])
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        orch.run_debate("research", prompt_gen)
+        result = orch.run_debate("research", prompt_gen)
 
         assert result.success is True
         # Primary: T1 + msg1 + msg3 + synthesis = 4
@@ -356,7 +356,7 @@ class TestFullDebateModeOrchestration:
         ])
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        orch.run_debate("research", prompt_gen)
+        result = orch.run_debate("research", prompt_gen)
 
         assert result.success is True
         assert primary_exec.execute.call_count == 5
@@ -378,7 +378,7 @@ class TestFullDebateModeOrchestration:
         ])
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        orch.run_debate("research", prompt_gen)
+        result = orch.run_debate("research", prompt_gen)
 
         msgs = result.turn2.messages
         assert len(msgs) == 3
@@ -403,7 +403,7 @@ class TestFullDebateModeOrchestration:
         ])
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        orch.run_debate("research", prompt_gen)
+        result = orch.run_debate("research", prompt_gen)
 
         assert result.turn1.primary_result is not None
         assert result.turn1.secondary_result is not None
@@ -516,7 +516,7 @@ class TestFullDebateModeOrchestration:
         ]
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        orch.run_debate("research", prompt_gen)
+        result = orch.run_debate("research", prompt_gen)
 
         assert result.success is True
         # Both T1 calls should have happened (sequential, not parallel)
@@ -543,7 +543,7 @@ class TestDebateErrorHandling:
         secondary_exec = _mock_executor("codex")
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        orch.run_debate("research", prompt_gen)
+        result = orch.run_debate("research", prompt_gen)
 
         assert result.success is False
         assert "CLI crashed" in result.error
@@ -561,7 +561,7 @@ class TestDebateErrorHandling:
         ])
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        orch.run_debate("research", prompt_gen)
+        result = orch.run_debate("research", prompt_gen)
 
         # SynthesisResult.success is based on is_error
         assert result.success is False
@@ -702,7 +702,7 @@ class TestTurn1Reuse:
         ])
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        orch.run_debate("research", prompt_gen)
+        result = orch.run_debate("research", prompt_gen)
 
         assert result.success is True
         # Primary called only once (synthesis), Turn 1 was skipped
@@ -738,7 +738,7 @@ class TestTurn1Reuse:
         ])
 
         orch = DebateOrchestrator(primary_exec, secondary_exec, config, context, file_manager)
-        orch.run_debate("research", prompt_gen)
+        result = orch.run_debate("research", prompt_gen)
 
         # Primary: 3 calls (msg1 + msg3 + synthesis), NOT 4 (T1 + msg1 + msg3 + synthesis)
         assert primary_exec.execute.call_count == 3
