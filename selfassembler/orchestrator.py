@@ -10,10 +10,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from selfassembler.context import WorkflowContext
+from selfassembler.error_classifier import ErrorOrigin, classify_error
 from selfassembler.errors import (
+    AgentExecutionError,
     ApprovalTimeoutError,
     BudgetExceededError,
     ContainerRequiredError,
+    FailureCategory,
     PhaseFailedError,
 )
 from selfassembler.executor import ClaudeExecutor  # Keep for backward compat type hints
@@ -170,6 +173,11 @@ class Orchestrator:
         if config.debate.enabled:
             self.secondary_executor = self._create_secondary_executor(context.repo_path)
 
+        # Create fallback executor (auto-detected or explicitly configured)
+        self.fallback_executor: AgentExecutor | None = self._create_fallback_executor(
+            context.repo_path
+        )
+
         # Enforce container for autonomous mode
         if config.autonomous_mode:
             self._enforce_container_runtime()
@@ -219,6 +227,58 @@ class Orchestrator:
             debug=self.config.streaming.debug,
         )
 
+    def _create_fallback_executor(self, working_dir: Path) -> AgentExecutor | None:
+        """Create a fallback agent executor for agent-specific failure recovery.
+
+        If fallback_agent is explicitly configured, uses that type (even if same
+        as primary — a fresh session clears accumulated context pressure).
+        Otherwise, auto-detects: picks the first installed agent that differs
+        from the primary agent type.
+        """
+        from selfassembler.executors import detect_installed_agents
+
+        agent_config = self.config.get_effective_agent_config()
+        primary_type = agent_config.type
+        fallback_type = self.config.fallback.fallback_agent
+
+        if fallback_type is None:
+            # Auto-detect: pick a different installed agent
+            installed = detect_installed_agents()
+            for agent_type, available in installed.items():
+                if available and agent_type != primary_type:
+                    fallback_type = agent_type
+                    break
+
+            if fallback_type is None:
+                self.logger.log(
+                    "fallback_executor_unavailable",
+                    data={
+                        "reason": "No alternative agent installed",
+                        "primary_type": primary_type,
+                    },
+                )
+                return None
+
+        self.logger.log(
+            "fallback_executor_created",
+            data={
+                "working_dir": str(working_dir),
+                "agent_type": fallback_type,
+                "primary_type": primary_type,
+            },
+        )
+
+        return create_executor(
+            agent_type=fallback_type,
+            working_dir=working_dir,
+            default_timeout=agent_config.default_timeout,
+            model=None,  # Use default model for fallback agent
+            stream=self.config.streaming.enabled,
+            stream_callback=self._stream_callback,
+            verbose=self.config.streaming.verbose,
+            debug=self.config.streaming.debug,
+        )
+
     def _reinitialize_executor_for_worktree(self) -> None:
         """Reinitialize executor to use worktree as working directory.
 
@@ -245,6 +305,19 @@ class Orchestrator:
                     },
                 )
                 self.secondary_executor = self._create_secondary_executor(
+                    self.context.worktree_path
+                )
+
+            # Also reinitialize fallback executor
+            if self.fallback_executor is not None:
+                self.logger.log(
+                    "fallback_executor_reinitializing_for_worktree",
+                    data={
+                        "old_working_dir": str(self.fallback_executor.working_dir),
+                        "new_working_dir": str(self.context.worktree_path),
+                    },
+                )
+                self.fallback_executor = self._create_fallback_executor(
                     self.context.worktree_path
                 )
 
@@ -465,6 +538,12 @@ class Orchestrator:
         """
         return bool(self.context.pr_url and self.context.branch_pushed)
 
+    # Phases excluded from fallback — infrastructure, non-idempotent, or side-effect phases
+    _FALLBACK_EXCLUDED_PHASES = frozenset({
+        "preflight", "setup", "commit_prep", "pr_creation", "pr_self_review",
+        "conflict_check",
+    })
+
     def _run_phase(self, phase: Phase) -> PhaseResult:
         """Run a single phase with all the orchestration logic."""
         phase_name = phase.name
@@ -520,7 +599,14 @@ class Orchestrator:
                 )
                 self.notifier.on_phase_retry(phase_name, attempt, max_retries)
 
-            result = phase.run()
+            try:
+                result = phase.run()
+            except AgentExecutionError as e:
+                result = PhaseResult(
+                    success=False,
+                    error=str(e),
+                    failure_category=FailureCategory.AGENT_SPECIFIC,
+                )
             last_result = result
 
             self.logger.log(
@@ -543,18 +629,29 @@ class Orchestrator:
                 break
 
             # Category-based retry decision
-            from selfassembler.errors import FailureCategory
-
             if result.failure_category in (FailureCategory.FATAL, FailureCategory.OSCILLATING):
-                self.notifier.on_phase_failed(phase_name, result, will_retry=False)
-                break  # No point retrying
+                break  # No point retrying (notification deferred until after fallback)
 
-            # If not the last attempt, log and retry
+            # If not the last attempt, notify and retry
             if attempt < max_retries:
                 self.notifier.on_phase_failed(phase_name, result, will_retry=True)
-            else:
-                # Final attempt failed
-                self.notifier.on_phase_failed(phase_name, result, will_retry=False)
+            # else: defer final failure notification until after fallback attempt
+
+        # Attempt fallback if retries exhausted and phase still failed
+        if (
+            last_result
+            and not last_result.success
+            and self.fallback_executor is not None
+            and self.context.budget_remaining() > 0
+            and self._should_attempt_fallback(last_result, phase)
+        ):
+            fallback_result = self._attempt_fallback(phase, last_result)
+            if fallback_result is not None:
+                last_result = fallback_result
+
+        # Now emit final failure notification if still failed
+        if last_result and not last_result.success:
+            self.notifier.on_phase_failed(phase_name, last_result, will_retry=False)
 
         if last_result and last_result.success:
             # Mark phase complete
@@ -603,6 +700,130 @@ class Orchestrator:
             )
 
         return last_result
+
+    def _should_attempt_fallback(self, result: PhaseResult, phase: Phase) -> bool:
+        """Determine whether to attempt fallback for a failed phase.
+
+        Returns False for:
+        - Phases in _FALLBACK_EXCLUDED_PHASES (infrastructure, non-idempotent)
+        - DebatePhase or LintCheckPhase subclasses (have their own multi-agent logic)
+        - OSCILLATING failures (switching agents won't help oscillation)
+        - Task errors when trigger is "agent_errors"
+        """
+        from selfassembler.phases import DebatePhase, LintCheckPhase
+
+        # Excluded phase names
+        if phase.name in self._FALLBACK_EXCLUDED_PHASES:
+            return False
+
+        # Excluded phase types (have their own secondary executor handling)
+        if isinstance(phase, (DebatePhase, LintCheckPhase)):
+            return False
+
+        # Oscillating failures are not agent-specific
+        if result.failure_category == FailureCategory.OSCILLATING:
+            return False
+
+        # If already categorized as agent-specific (e.g., from AgentExecutionError),
+        # always allow fallback regardless of trigger mode
+        if result.failure_category == FailureCategory.AGENT_SPECIFIC:
+            return True
+
+        # Check trigger mode
+        if self.config.fallback.trigger == "all_errors":
+            return True
+
+        # "agent_errors" mode: classify the error text
+        agent_type = getattr(phase.executor, "AGENT_TYPE", None)
+        classification = classify_error(result.error, agent_type)
+        return classification.origin == ErrorOrigin.AGENT
+
+    def _attempt_fallback(self, phase: Phase, primary_result: PhaseResult) -> PhaseResult | None:
+        """Attempt to run the phase with the fallback executor.
+
+        Temporarily swaps the phase's executor to the fallback executor,
+        runs the phase, and always restores the original executor.
+
+        Returns the fallback PhaseResult if successful, None if fallback also failed.
+        """
+        if self.fallback_executor is None:
+            return None
+
+        fallback_type = getattr(self.fallback_executor, "AGENT_TYPE", "unknown")
+        primary_type = getattr(self.executor, "AGENT_TYPE", "unknown")
+        max_attempts = self.config.fallback.max_fallback_attempts
+
+        self.logger.log(
+            "fallback_attempting",
+            phase=phase.name,
+            data={
+                "primary_agent": primary_type,
+                "fallback_agent": fallback_type,
+                "primary_error": primary_result.error[:300] if primary_result.error else None,
+                "max_attempts": max_attempts,
+            },
+        )
+
+        original_executor = phase.executor
+        try:
+            phase.executor = self.fallback_executor
+
+            for attempt in range(max_attempts):
+                try:
+                    result = phase.run()
+                except AgentExecutionError as e:
+                    result = PhaseResult(
+                        success=False,
+                        error=str(e),
+                        failure_category=FailureCategory.AGENT_SPECIFIC,
+                    )
+
+                self.logger.log(
+                    "fallback_attempt_complete",
+                    phase=phase.name,
+                    data={
+                        "attempt": attempt,
+                        "success": result.success,
+                        "cost_usd": result.cost_usd,
+                        "fallback_agent": fallback_type,
+                        "error": result.error[:300] if result.error else None,
+                    },
+                )
+
+                if result.success:
+                    result.executed_by = fallback_type
+                    result.warnings.append(
+                        f"Phase executed by fallback agent '{fallback_type}' "
+                        f"after primary agent '{primary_type}' failed"
+                    )
+                    return result
+
+                # If fallback also hits an agent-specific error, stop early
+                is_agent_error = result.failure_category == FailureCategory.AGENT_SPECIFIC
+                if not is_agent_error:
+                    agent_type_fb = getattr(self.fallback_executor, "AGENT_TYPE", None)
+                    fb_classification = classify_error(result.error, agent_type_fb)
+                    is_agent_error = fb_classification.origin == ErrorOrigin.AGENT
+                if is_agent_error:
+                    self.logger.log(
+                        "fallback_agent_error",
+                        phase=phase.name,
+                        data={
+                            "reason": "Fallback agent also hit agent-specific error",
+                            "error": result.error[:300] if result.error else None,
+                        },
+                    )
+                    break
+
+        finally:
+            phase.executor = original_executor
+
+        self.logger.log(
+            "fallback_failed",
+            phase=phase.name,
+            data={"fallback_agent": fallback_type},
+        )
+        return None
 
     def _needs_approval(self, phase: Phase) -> bool:
         """Check if phase requires approval."""

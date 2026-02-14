@@ -12,6 +12,7 @@ class FailureCategory(Enum):
     FIXABLE = "fixable"  # Errors the AI might fix, retry up to max
     FATAL = "fatal"  # Unrecoverable, stop immediately
     OSCILLATING = "oscillating"  # Fix loop cycling, stop immediately
+    AGENT_SPECIFIC = "agent_specific"  # Agent-level failure, may resolve by switching agents
 
 
 class SelfAssemblerError(Exception):

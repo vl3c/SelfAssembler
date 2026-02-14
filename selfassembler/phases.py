@@ -38,6 +38,7 @@ class PhaseResult:
     session_id: str | None = None
     failure_category: Any = None  # FailureCategory | None
     warnings: list[str] = field(default_factory=list)
+    executed_by: str | None = None  # Agent type that actually executed (set on fallback)
 
 
 class Phase(ABC):
