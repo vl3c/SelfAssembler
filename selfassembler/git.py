@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -9,6 +10,10 @@ from datetime import datetime
 from pathlib import Path
 
 from selfassembler.errors import GitOperationError, WorktreeError
+
+# Tracks what ensure_identity() last exported so subsequent calls can distinguish
+# our own exports from externally-set env vars.
+_sa_exported_identity: tuple[str, str] | None = None
 
 
 class GitManager:
@@ -64,6 +69,54 @@ class GitManager:
         result = self._run(["status", "--porcelain"], check=False)
         output = result.stdout.strip()
         return (len(output) == 0, output)
+
+    def ensure_identity(self) -> dict[str, str]:
+        """Resolve git identity and export to environment for child processes.
+
+        Resolution order:
+            1. Environment variables (GIT_AUTHOR_NAME / GIT_AUTHOR_EMAIL),
+               but only if they were set externally (not by a prior call)
+            2. Git config (user.name / user.email)
+            3. Fallback: SelfAssembler / selfassembler@localhost
+
+        Returns:
+            Dict with 'name', 'email', 'source' keys.
+        """
+        global _sa_exported_identity
+
+        # 1. Check environment variables — skip if they match our own prior export
+        env_name = os.environ.get("GIT_AUTHOR_NAME")
+        env_email = os.environ.get("GIT_AUTHOR_EMAIL")
+        is_our_export = (
+            _sa_exported_identity is not None
+            and (env_name, env_email) == _sa_exported_identity
+        )
+        if env_name and env_email and not is_our_export:
+            self._export_identity(env_name, env_email)
+            return {"name": env_name, "email": env_email, "source": "env"}
+
+        # 2. Check git config
+        name_result = self._run(["config", "user.name"], check=False)
+        email_result = self._run(["config", "user.email"], check=False)
+        config_name = name_result.stdout.strip() if name_result.returncode == 0 else ""
+        config_email = email_result.stdout.strip() if email_result.returncode == 0 else ""
+
+        if config_name and config_email:
+            self._export_identity(config_name, config_email)
+            return {"name": config_name, "email": config_email, "source": "git-config"}
+
+        # 3. Fallback
+        self._export_identity("SelfAssembler", "selfassembler@localhost")
+        return {"name": "SelfAssembler", "email": "selfassembler@localhost", "source": "fallback"}
+
+    def _export_identity(self, name: str, email: str) -> None:
+        """Export git identity to environment variables for child processes."""
+        global _sa_exported_identity
+        os.environ["GIT_AUTHOR_NAME"] = name
+        os.environ["GIT_AUTHOR_EMAIL"] = email
+        os.environ["GIT_COMMITTER_NAME"] = name
+        os.environ["GIT_COMMITTER_EMAIL"] = email
+        _sa_exported_identity = (name, email)
 
     def has_remote(self, remote: str = "origin") -> bool:
         """Check if a remote exists."""
