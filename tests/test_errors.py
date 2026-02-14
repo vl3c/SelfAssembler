@@ -6,6 +6,7 @@ from selfassembler.errors import (
     AgentExecutionError,
     BudgetExceededError,
     ClaudeExecutionError,
+    FailureCategory,
     GitOperationError,
     PhaseFailedError,
     PreflightFailedError,
@@ -189,3 +190,19 @@ class TestGitOperationError:
         error = GitOperationError("push", "permission denied", returncode=128)
 
         assert error.returncode == 128
+
+
+class TestFailureCategory:
+    """Tests for FailureCategory enum."""
+
+    def test_agent_specific_exists(self):
+        """Test AGENT_SPECIFIC enum value exists."""
+        assert FailureCategory.AGENT_SPECIFIC.value == "agent_specific"
+
+    def test_all_categories(self):
+        """Test all expected categories exist."""
+        assert FailureCategory.TRANSIENT.value == "transient"
+        assert FailureCategory.FIXABLE.value == "fixable"
+        assert FailureCategory.FATAL.value == "fatal"
+        assert FailureCategory.OSCILLATING.value == "oscillating"
+        assert FailureCategory.AGENT_SPECIFIC.value == "agent_specific"

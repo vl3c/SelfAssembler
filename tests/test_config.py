@@ -6,6 +6,7 @@ from pathlib import Path
 from selfassembler.config import (
     AgentConfig,
     ClaudeConfig,
+    FallbackConfig,
     GitConfig,
     PhaseConfig,
     RulesConfig,
@@ -447,3 +448,93 @@ class TestAgentConfigSaveLoad:
             loaded = WorkflowConfig.load(config_path)
             assert loaded.agent.type == "claude"
             assert loaded.agent.default_timeout == 600
+
+
+class TestFallbackConfig:
+    """Tests for FallbackConfig model."""
+
+    def test_default_config(self):
+        """Test FallbackConfig defaults."""
+        config = FallbackConfig()
+        assert config.fallback_agent is None
+        assert config.max_fallback_attempts == 1
+        assert config.trigger == "agent_errors"
+
+    def test_custom_values(self):
+        """Test FallbackConfig with custom values."""
+        config = FallbackConfig(
+            fallback_agent="codex",
+            max_fallback_attempts=3,
+            trigger="all_errors",
+        )
+        assert config.fallback_agent == "codex"
+        assert config.max_fallback_attempts == 3
+        assert config.trigger == "all_errors"
+
+    def test_in_workflow_config(self):
+        """Test FallbackConfig is in WorkflowConfig."""
+        config = WorkflowConfig()
+        assert hasattr(config, "fallback")
+        assert isinstance(config.fallback, FallbackConfig)
+
+    def test_fallback_in_to_dict(self):
+        """Test fallback config appears in to_dict output."""
+        config = WorkflowConfig()
+        data = config.to_dict()
+        assert "fallback" in data
+        assert data["fallback"]["trigger"] == "agent_errors"
+
+    def test_trigger_validation(self):
+        """Test trigger field validation."""
+        import pytest
+        from pydantic import ValidationError
+
+        # Valid values
+        FallbackConfig(trigger="agent_errors")
+        FallbackConfig(trigger="all_errors")
+
+        # Invalid value
+        with pytest.raises(ValidationError):
+            FallbackConfig(trigger="invalid")
+
+    def test_max_attempts_validation(self):
+        """Test max_fallback_attempts validation (min 0, max 5)."""
+        import pytest
+        from pydantic import ValidationError
+
+        # Valid values
+        FallbackConfig(max_fallback_attempts=0)
+        FallbackConfig(max_fallback_attempts=5)
+
+        # Invalid values
+        with pytest.raises(ValidationError):
+            FallbackConfig(max_fallback_attempts=-1)
+        with pytest.raises(ValidationError):
+            FallbackConfig(max_fallback_attempts=6)
+
+    def test_save_and_load_fallback_config(self):
+        """Test saving and loading fallback configuration."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "test_config.yaml"
+
+            # Create config with custom fallback settings
+            config = WorkflowConfig()
+            config.fallback.fallback_agent = "codex"
+            config.fallback.max_fallback_attempts = 2
+            config.fallback.trigger = "all_errors"
+            config.save(config_path)
+
+            # Load and verify
+            loaded = WorkflowConfig.load(config_path)
+            assert loaded.fallback.fallback_agent == "codex"
+            assert loaded.fallback.max_fallback_attempts == 2
+            assert loaded.fallback.trigger == "all_errors"
+
+    def test_load_config_without_fallback_section(self):
+        """Test loading config without fallback section uses defaults."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "test_config.yaml"
+            config_path.write_text("budget_limit_usd: 20.0\n")
+
+            loaded = WorkflowConfig.load(config_path)
+            assert loaded.fallback.fallback_agent is None
