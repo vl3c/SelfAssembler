@@ -246,6 +246,7 @@ class PreflightPhase(Phase):
         checks = [
             self._check_agent_cli(),
             self._check_gh_cli(),
+            self._check_git_identity(),
             self._check_git_clean(),
             self._check_git_updated(),
         ]
@@ -310,6 +311,21 @@ class PreflightPhase(Phase):
             }
         except Exception as e:
             return {"name": "gh_cli", "passed": False, "message": str(e)}
+
+    def _check_git_identity(self) -> dict[str, Any]:
+        """Resolve and export git identity for commit operations."""
+        try:
+            git = GitManager(self.context.repo_path)
+            identity = git.ensure_identity()
+            return {
+                "name": "git_identity",
+                "passed": True,
+                "identity_name": identity["name"],
+                "identity_email": identity["email"],
+                "source": identity["source"],
+            }
+        except Exception as e:
+            return {"name": "git_identity", "passed": False, "message": str(e)}
 
     def _check_git_clean(self) -> dict[str, Any]:
         """Check if git working directory is clean."""

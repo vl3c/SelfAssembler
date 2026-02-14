@@ -1010,6 +1010,8 @@ class TestPreflightRun:
         ), patch.object(
             phase, "_check_gh_cli", return_value={"name": "gh_cli", "passed": True}
         ), patch.object(
+            phase, "_check_git_identity", return_value={"name": "git_identity", "passed": True}
+        ), patch.object(
             phase, "_check_git_clean", return_value={"name": "git_clean", "passed": True}
         ), patch.object(
             phase,
@@ -1034,6 +1036,8 @@ class TestPreflightRun:
         ), patch.object(
             phase, "_check_gh_cli", return_value={"name": "gh_cli", "passed": True}
         ), patch.object(
+            phase, "_check_git_identity", return_value={"name": "git_identity", "passed": True}
+        ), patch.object(
             phase, "_check_git_clean", return_value={"name": "git_clean", "passed": True}
         ), patch.object(
             phase,
@@ -1055,6 +1059,8 @@ class TestPreflightRun:
             phase, "_check_agent_cli", return_value={"name": "agent_cli", "passed": True}
         ), patch.object(
             phase, "_check_gh_cli", return_value={"name": "gh_cli", "passed": True}
+        ), patch.object(
+            phase, "_check_git_identity", return_value={"name": "git_identity", "passed": True}
         ), patch.object(
             phase, "_check_git_clean", return_value={"name": "git_clean", "passed": True}
         ), patch.object(
