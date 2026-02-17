@@ -185,7 +185,23 @@ class Notifier:
 
     def on_phase_failed(self, phase: str, result: PhaseResult, will_retry: bool = False) -> None:
         """Notify that a phase failed."""
-        error_preview = result.error[:200] if result.error else "Unknown error"
+        if result.error:
+            error_preview = result.error[:200]
+        else:
+            # Build a more informative message when error field is empty
+            hints = []
+            if result.artifacts:
+                for key, val in result.artifacts.items():
+                    hints.append(f"{key}={str(val)[:100]}")
+            if hasattr(result, "failure_category") and result.failure_category:
+                hints.append(f"category={result.failure_category}")
+            if hints:
+                error_preview = f"No error message (hints: {'; '.join(hints[:3])})"
+            else:
+                error_preview = (
+                    "No error message — the agent may have crashed or produced no output. "
+                    "Check the workflow log for details."
+                )
         retry_msg = " (will retry)" if will_retry else ""
         level = "warning" if will_retry else "error"
         self._send(

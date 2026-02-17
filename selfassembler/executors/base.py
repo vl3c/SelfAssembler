@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -32,6 +33,12 @@ class ExecutionResult:
     def validate(self) -> ExecutionResult:
         """Flag suspicious results as errors."""
         if not self.is_error and self.cost_usd == 0.0 and not self.output.strip():
+            print(
+                f"[{self.agent_type}] validate: suspicious result — "
+                f"zero cost, empty output, duration={self.duration_ms}ms, "
+                f"raw_output={self.raw_output[:200]!r}",
+                file=sys.stderr,
+            )
             return ExecutionResult(
                 session_id=self.session_id,
                 output="Agent produced no output and reported zero cost (possible auth/config issue)",

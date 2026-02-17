@@ -6,6 +6,7 @@ import contextlib
 import functools
 import json
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -125,6 +126,17 @@ class CodexExecutor(AgentExecutor):
         )
         return sandbox, False, False
 
+    def _log_error_result(self, result: ExecutionResult, context: str) -> None:
+        """Log diagnostic info when an execution result is an error."""
+        if result.is_error:
+            print(
+                f"[codex] {context}: is_error=True, "
+                f"output={result.output[:300]!r}, "
+                f"raw_output={result.raw_output[:200]!r}, "
+                f"duration={result.duration_ms}ms, turns={result.num_turns}",
+                file=sys.stderr,
+            )
+
     def execute(
         self,
         prompt: str,
@@ -162,7 +174,7 @@ class CodexExecutor(AgentExecutor):
         effective_working_dir = working_dir or self.working_dir
 
         if use_stream:
-            return self._execute_streaming(
+            result = self._execute_streaming(
                 prompt=prompt,
                 permission_mode=permission_mode,
                 allowed_tools=allowed_tools,
@@ -172,6 +184,8 @@ class CodexExecutor(AgentExecutor):
                 dangerous_mode=dangerous_mode,
                 working_dir=effective_working_dir,
             ).validate()
+            self._log_error_result(result, "execute(streaming)")
+            return result
 
         cmd = self._build_command(
             prompt=prompt,
@@ -193,7 +207,9 @@ class CodexExecutor(AgentExecutor):
                 timeout=effective_timeout,
             )
             elapsed_ms = int((time.time() - start_time) * 1000)
-            return self._parse_result(result, elapsed_ms).validate()
+            parsed = self._parse_result(result, elapsed_ms).validate()
+            self._log_error_result(parsed, "execute(non-streaming)")
+            return parsed
 
         except subprocess.TimeoutExpired as e:
             elapsed_ms = int((time.time() - start_time) * 1000)
@@ -368,6 +384,13 @@ class CodexExecutor(AgentExecutor):
 
             # Construct result from collected output
             output = "".join(stdout_lines)
+            if process.returncode != 0:
+                stderr_text = "".join(stderr_lines).strip()
+                print(
+                    f"[codex] _execute_streaming: returncode={process.returncode}, "
+                    f"stderr={stderr_text[:500]!r}",
+                    file=sys.stderr,
+                )
             return ExecutionResult(
                 session_id="",  # Codex doesn't provide session IDs
                 output=output.strip(),

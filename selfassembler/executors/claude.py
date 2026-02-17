@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -46,6 +47,17 @@ class ClaudeExecutor(AgentExecutor):
             debug=debug,
         )
 
+    def _log_error_result(self, result: ExecutionResult, context: str) -> None:
+        """Log diagnostic info when an execution result is an error."""
+        if result.is_error:
+            print(
+                f"[claude] {context}: is_error=True, "
+                f"output={result.output[:300]!r}, "
+                f"raw_output={result.raw_output[:200]!r}, "
+                f"duration={result.duration_ms}ms, turns={result.num_turns}",
+                file=sys.stderr,
+            )
+
     def execute(
         self,
         prompt: str,
@@ -83,7 +95,7 @@ class ClaudeExecutor(AgentExecutor):
         effective_working_dir = working_dir or self.working_dir
 
         if use_stream:
-            return self._execute_streaming(
+            result = self._execute_streaming(
                 prompt=prompt,
                 permission_mode=permission_mode,
                 allowed_tools=allowed_tools,
@@ -93,6 +105,8 @@ class ClaudeExecutor(AgentExecutor):
                 dangerous_mode=dangerous_mode,
                 working_dir=effective_working_dir,
             ).validate()
+            self._log_error_result(result, "execute(streaming)")
+            return result
 
         cmd = self._build_command(
             prompt=prompt,
@@ -114,7 +128,9 @@ class ClaudeExecutor(AgentExecutor):
                 timeout=effective_timeout,
             )
             elapsed_ms = int((time.time() - start_time) * 1000)
-            return self._parse_result(result, elapsed_ms).validate()
+            parsed = self._parse_result(result, elapsed_ms).validate()
+            self._log_error_result(parsed, "execute(non-streaming)")
+            return parsed
 
         except subprocess.TimeoutExpired as e:
             elapsed_ms = int((time.time() - start_time) * 1000)
@@ -284,6 +300,13 @@ class ClaudeExecutor(AgentExecutor):
 
             # No result event found — always treat as error
             stderr_text = "".join(stderr_lines).strip()
+            print(
+                f"[claude] _execute_streaming: no result event, "
+                f"returncode={process.returncode}, "
+                f"stderr={stderr_text[:500]!r}, "
+                f"events_count={len(all_events)}",
+                file=sys.stderr,
+            )
             return ExecutionResult(
                 session_id="",
                 output=f"No result event received. Stderr: {stderr_text[:500]}" if stderr_text
@@ -359,6 +382,13 @@ class ClaudeExecutor(AgentExecutor):
             )
         except json.JSONDecodeError:
             # If JSON parsing fails and stdout is empty, include stderr
+            if result.stderr:
+                print(
+                    f"[claude] _parse_result: JSON parse failed, "
+                    f"returncode={result.returncode}, "
+                    f"stderr={result.stderr[:500]!r}",
+                    file=sys.stderr,
+                )
             if not raw_output.strip() and result.stderr:
                 output = f"No parseable output. Stderr: {result.stderr[:500]}"
                 is_error = True
