@@ -470,7 +470,7 @@ class ResearchPhase(DebatePhase):
     name = "research"
     debate_phase_name = "research"
     claude_mode = "plan"  # Read-only
-    allowed_tools = ["Read", "Grep", "Glob", "LS", "WebSearch"]
+    allowed_tools = ["Read", "Grep", "Glob", "LS", "WebSearch", "Write"]
     max_turns = 25
     timeout_seconds = 300
     fresh_context = True  # Unbiased research
@@ -1085,7 +1085,7 @@ class CodeReviewPhase(DebatePhase):
     debate_phase_name = "code_review"
     claude_mode = "plan"  # Read-only
     fresh_context = True  # Critical: unbiased review
-    allowed_tools = ["Read", "Grep", "Glob", "Bash"]
+    allowed_tools = ["Read", "Grep", "Glob", "Bash", "Write"]
     max_turns = 30
     timeout_seconds = 600
 
