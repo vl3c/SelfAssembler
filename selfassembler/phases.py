@@ -90,6 +90,9 @@ class Phase(ABC):
         """
         Derive the permission mode for this phase.
 
+        - If SA_PERMISSION_MODE env var is set, use it unconditionally (e.g.,
+          Docker containers where the sandbox provides isolation and Claude Code's
+          own permission restrictions are unnecessary)
         - If requires_write is True, use "acceptEdits" (for Bash-based write phases)
         - If allowed_tools includes file write operations (Write, Edit), use "acceptEdits"
           (this takes priority because Codex's "suggest" mode is fully read-only)
@@ -100,6 +103,13 @@ class Phase(ABC):
         for read-only operations (e.g., CodeReviewPhase uses git diff). Phases that
         need Bash for writing should set requires_write = True.
         """
+        import os
+
+        # Environment override (e.g., Docker sandbox where container = isolation)
+        env_mode = os.environ.get("SA_PERMISSION_MODE")
+        if env_mode:
+            return env_mode
+
         # Explicit write requirement (e.g., git commit phases)
         if self.requires_write:
             return "acceptEdits"
