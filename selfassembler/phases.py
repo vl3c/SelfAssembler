@@ -793,12 +793,34 @@ Do NOT run the tests yet (separate phase).
 
 
 class TestExecutionPhase(Phase):
-    """Run tests with fix-and-retry loop."""
+    """Run tests with fix-and-retry loop.
 
+    When a secondary executor is available, fix iterations alternate between
+    primary and secondary agents (P→S→P→S) for diverse fix strategies —
+    mirroring the approach used by LintCheckPhase.
+    """
+
+    __test__ = False  # Not a pytest test class
     name = "test_execution"
     allowed_tools = ["Read", "Edit", "Grep", "Glob", "Bash"]
     max_turns = 60
     timeout_seconds = 1800
+
+    def __init__(
+        self,
+        context: WorkflowContext,
+        executor: AgentExecutor,
+        config: WorkflowConfig,
+        secondary_executor: AgentExecutor | None = None,
+    ) -> None:
+        super().__init__(context, executor, config)
+        self.secondary_executor = secondary_executor
+
+    def _get_executor_for_iteration(self, iteration: int) -> AgentExecutor:
+        """Return the executor for a given iteration, alternating P→S→P→S."""
+        if self.secondary_executor and iteration % 2 == 1:
+            return self.secondary_executor
+        return self.executor
 
     def run(self) -> PhaseResult:
         from selfassembler.errors import FailureCategory
@@ -842,13 +864,15 @@ class TestExecutionPhase(Phase):
                 known_ids = load_known_failures(workdir)
 
         error_history: list[frozenset[str]] = []
-        fix_session_id: str | None = None
+        # Per-executor session IDs: slot 0 = primary, slot 1 = secondary
+        fix_sessions: dict[int, str | None] = {0: None, 1: None}
         test_result: dict = {}
 
         for iteration in range(max_iterations):
             success, stdout, stderr = run_command(workdir, test_cmd, timeout=cmd_timeout)
             output = stdout + stderr
             test_result = parse_test_output(output)
+            cur_executor = self._get_executor_for_iteration(iteration)
 
             if test_result["all_passed"] or success:
                 return PhaseResult(
@@ -929,8 +953,12 @@ class TestExecutionPhase(Phase):
                 # Stage current state as savepoint
                 run_command(workdir, "git add -A", timeout=30)
 
-                fix_session_id = self._fix_failures(output, test_result, session_id=fix_session_id)
-                if fix_session_id is None:
+                slot = iteration % 2
+                fix_sessions[slot] = self._fix_failures(
+                    output, test_result, session_id=fix_sessions[slot],
+                    executor=cur_executor,
+                )
+                if fix_sessions[slot] is None:
                     run_command(workdir, "git checkout -- .", timeout=30)
                     return PhaseResult(
                         success=False,
@@ -1045,8 +1073,10 @@ Report the final test results.
         output: str,
         test_result: dict[str, Any],
         session_id: str | None = None,
+        executor: AgentExecutor | None = None,
     ) -> str | None:
         """Fix test failures. Returns session_id for continuity, None on failure."""
+        use_executor = executor or self.executor
         failures_summary = "\n".join(test_result.get("failures", [])[:10])
 
         if session_id:
@@ -1064,7 +1094,7 @@ Report the final test results.
                 f"Do NOT run tests yet (I will run them after your fixes)."
             )
 
-        result = self.executor.execute(
+        result = use_executor.execute(
             prompt=prompt,
             resume_session=session_id,
             permission_mode=self._get_permission_mode(),
