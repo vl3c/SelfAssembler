@@ -286,11 +286,20 @@ class Orchestrator:
         subsequent Claude operations happen inside the worktree.
         """
         if self.context.worktree_path and self.context.worktree_path.exists():
+            # Update plans_dir to be inside the worktree so that agents
+            # running in the worktree write output files to the correct
+            # location (relative to their cwd)
+            old_plans_dir = self.context.plans_dir
+            relative_plans = self.context.plans_dir.relative_to(self.context.repo_path)
+            self.context.plans_dir = self.context.worktree_path / relative_plans
+
             self.logger.log(
                 "executor_reinitializing_for_worktree",
                 data={
                     "old_working_dir": str(self.executor.working_dir),
                     "new_working_dir": str(self.context.worktree_path),
+                    "old_plans_dir": str(old_plans_dir),
+                    "new_plans_dir": str(self.context.plans_dir),
                 },
             )
             self.executor = self._create_executor(self.context.worktree_path)
