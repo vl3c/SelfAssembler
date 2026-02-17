@@ -14,6 +14,7 @@ from selfassembler.phases import (
     LintCheckPhase,
     Phase,
     PhaseResult,
+    TestExecutionPhase,
 )
 
 
@@ -100,16 +101,20 @@ class TestShouldAttemptFallback:
             orch.approval_store = MagicMock()
         return orch
 
-    def test_oscillating_blocks_fallback(self):
-        orch = self._make_orchestrator()
+    def test_oscillating_allows_fallback_for_non_multiagent_phases(self):
+        """Oscillating failures from phases without built-in agent alternation
+        should be eligible for fallback (no longer categorically blocked)."""
+        config = _make_config(trigger="all_errors")
+        orch = self._make_orchestrator(config=config)
         phase = MagicMock(spec=ImplementationPhase)
         phase.name = "implementation"
+        phase.executor = _make_executor("claude")
         result = PhaseResult(
             success=False,
             error="oscillation detected",
             failure_category=FailureCategory.OSCILLATING,
         )
-        assert orch._should_attempt_fallback(result, phase) is False
+        assert orch._should_attempt_fallback(result, phase) is True
 
     def test_excluded_phase_commit_prep(self):
         orch = self._make_orchestrator()
@@ -158,6 +163,15 @@ class TestShouldAttemptFallback:
         phase = MagicMock(spec=LintCheckPhase)
         phase.name = "lint_check"
         result = PhaseResult(success=False, error="rate limit exceeded")
+        assert orch._should_attempt_fallback(result, phase) is False
+
+    def test_test_execution_phase_excluded(self):
+        """TestExecutionPhase has built-in agent alternation, so it's excluded
+        from fallback (like LintCheckPhase and DebatePhase)."""
+        orch = self._make_orchestrator()
+        phase = MagicMock(spec=TestExecutionPhase)
+        phase.name = "test_execution"
+        result = PhaseResult(success=False, error="test fix oscillation")
         assert orch._should_attempt_fallback(result, phase) is False
 
     def test_agent_error_triggers_in_agent_errors_mode(self):

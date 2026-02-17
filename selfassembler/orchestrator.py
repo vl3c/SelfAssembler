@@ -286,11 +286,20 @@ class Orchestrator:
         subsequent Claude operations happen inside the worktree.
         """
         if self.context.worktree_path and self.context.worktree_path.exists():
+            # Update plans_dir to be inside the worktree so that agents
+            # running in the worktree write output files to the correct
+            # location (relative to their cwd)
+            old_plans_dir = self.context.plans_dir
+            relative_plans = self.context.plans_dir.relative_to(self.context.repo_path)
+            self.context.plans_dir = self.context.worktree_path / relative_plans
+
             self.logger.log(
                 "executor_reinitializing_for_worktree",
                 data={
                     "old_working_dir": str(self.executor.working_dir),
                     "new_working_dir": str(self.context.worktree_path),
+                    "old_plans_dir": str(old_plans_dir),
+                    "new_plans_dir": str(self.context.plans_dir),
                 },
             )
             self.executor = self._create_executor(self.context.worktree_path)
@@ -324,13 +333,14 @@ class Orchestrator:
     def _create_phase(self, phase_class: type[Phase]) -> Phase:
         """Create a phase instance, passing secondary executor if supported.
 
-        For phases that inherit from DebatePhase or LintCheckPhase, the
-        secondary executor is passed to enable multi-agent collaboration.
+        For phases that inherit from DebatePhase, LintCheckPhase, or
+        TestExecutionPhase, the secondary executor is passed to enable
+        multi-agent collaboration (agent alternation for fix loops).
         """
-        from selfassembler.phases import DebatePhase, LintCheckPhase
+        from selfassembler.phases import DebatePhase, LintCheckPhase, TestExecutionPhase
 
         # Pass secondary executor to phases that support it
-        if issubclass(phase_class, (DebatePhase, LintCheckPhase)):
+        if issubclass(phase_class, (DebatePhase, LintCheckPhase, TestExecutionPhase)):
             return phase_class(
                 context=self.context,
                 executor=self.executor,
@@ -713,22 +723,18 @@ class Orchestrator:
 
         Returns False for:
         - Phases in _FALLBACK_EXCLUDED_PHASES (infrastructure, non-idempotent)
-        - DebatePhase or LintCheckPhase subclasses (have their own multi-agent logic)
-        - OSCILLATING failures (switching agents won't help oscillation)
+        - DebatePhase, LintCheckPhase, or TestExecutionPhase subclasses
+          (have their own multi-agent logic via agent alternation)
         - Task errors when trigger is "agent_errors"
         """
-        from selfassembler.phases import DebatePhase, LintCheckPhase
+        from selfassembler.phases import DebatePhase, LintCheckPhase, TestExecutionPhase
 
         # Excluded phase names
         if phase.name in self._FALLBACK_EXCLUDED_PHASES:
             return False
 
         # Excluded phase types (have their own secondary executor handling)
-        if isinstance(phase, (DebatePhase, LintCheckPhase)):
-            return False
-
-        # Oscillating failures are not agent-specific
-        if result.failure_category == FailureCategory.OSCILLATING:
+        if isinstance(phase, (DebatePhase, LintCheckPhase, TestExecutionPhase)):
             return False
 
         # If already categorized as agent-specific (e.g., from AgentExecutionError),

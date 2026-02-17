@@ -31,17 +31,29 @@ class ExecutionResult:
         return self.duration_ms / 1000.0
 
     def validate(self) -> ExecutionResult:
-        """Flag suspicious results as errors."""
-        if not self.is_error and self.cost_usd == 0.0 and not self.output.strip():
+        """Flag suspicious results as errors.
+
+        Only flags when output is empty AND the agent ran for less than 30
+        seconds — a long-running agent with empty output likely did real work
+        (e.g., writing files) but the CLI didn't include a text summary.
+        Subscription-based auth always reports zero cost, so cost alone is
+        not a reliable signal.
+        """
+        if (
+            not self.is_error
+            and not self.output.strip()
+            and self.duration_ms < 30_000
+            and self.num_turns <= 1
+        ):
             print(
                 f"[{self.agent_type}] validate: suspicious result — "
-                f"zero cost, empty output, duration={self.duration_ms}ms, "
+                f"empty output, duration={self.duration_ms}ms, turns={self.num_turns}, "
                 f"raw_output={self.raw_output[:200]!r}",
                 file=sys.stderr,
             )
             return ExecutionResult(
                 session_id=self.session_id,
-                output="Agent produced no output and reported zero cost (possible auth/config issue)",
+                output="Agent produced no output (possible auth/config issue)",
                 cost_usd=0.0,
                 duration_ms=self.duration_ms,
                 num_turns=self.num_turns,

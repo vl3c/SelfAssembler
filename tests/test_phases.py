@@ -206,13 +206,14 @@ class TestPhasePermissionModeHelper:
         """Create a config for testing."""
         return WorkflowConfig()
 
-    def test_read_only_phase_returns_claude_mode(self, context: WorkflowContext, config: WorkflowConfig):
-        """Test that phases with claude_mode='plan' return 'plan'."""
+    def test_research_phase_returns_accept_edits_for_write_tool(self, context: WorkflowContext, config: WorkflowConfig):
+        """Test that research phase returns 'acceptEdits' because it has Write tool."""
         executor = MockClaudeExecutor()
         phase = ResearchPhase(context, executor, config)
 
-        # ResearchPhase has claude_mode = "plan"
-        assert phase._get_permission_mode() == "plan"
+        # ResearchPhase has claude_mode = "plan" but Write in allowed_tools,
+        # so write_tools check takes priority → acceptEdits
+        assert phase._get_permission_mode() == "acceptEdits"
 
     def test_write_phase_returns_accept_edits(self, context: WorkflowContext, config: WorkflowConfig):
         """Test that write phases without claude_mode return 'acceptEdits'."""
@@ -232,14 +233,14 @@ class TestPhasePermissionModeHelper:
         # Write tools take priority over claude_mode for Codex compatibility
         assert phase._get_permission_mode() == "acceptEdits"
 
-    def test_code_review_returns_plan_despite_bash_tool(self, context: WorkflowContext, config: WorkflowConfig):
-        """Test that code review phase returns 'plan' - Bash is not a write tool."""
+    def test_code_review_returns_accept_edits_for_write_tool(self, context: WorkflowContext, config: WorkflowConfig):
+        """Test that code review returns 'acceptEdits' because it has Write tool."""
         executor = MockClaudeExecutor()
         phase = CodeReviewPhase(context, executor, config)
 
-        # CodeReviewPhase has Bash in allowed_tools but Bash is NOT a write tool
-        # (it's used for read-only ops like git diff), so claude_mode takes precedence
-        assert phase._get_permission_mode() == "plan"
+        # CodeReviewPhase has Write in allowed_tools for writing review output files,
+        # so write_tools check takes priority over claude_mode → acceptEdits
+        assert phase._get_permission_mode() == "acceptEdits"
 
     def test_requires_write_returns_accept_edits(self, context: WorkflowContext, config: WorkflowConfig):
         """Test that phases with requires_write=True return 'acceptEdits'."""
