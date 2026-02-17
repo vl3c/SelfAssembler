@@ -685,13 +685,20 @@ class Orchestrator:
 
         else:
             failure_cat = last_result.failure_category if last_result else None
+            fail_data: dict[str, Any] = {
+                "error": last_result.error if last_result else "No result",
+                "failure_category": str(failure_cat) if failure_cat else None,
+            }
+            if last_result and last_result.artifacts:
+                fail_data["artifacts"] = {
+                    k: str(v)[:500] for k, v in last_result.artifacts.items()
+                }
+            if last_result and last_result.warnings:
+                fail_data["warnings"] = last_result.warnings
             self.logger.log(
                 "phase_failed",
                 phase=phase_name,
-                data={
-                    "error": last_result.error if last_result else "No result",
-                    "failure_category": str(failure_cat) if failure_cat else None,
-                },
+                data=fail_data,
             )
             raise PhaseFailedError(
                 phase_name,

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import concurrent.futures
+import sys
+import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -156,6 +158,11 @@ class DebateOrchestrator:
             )
 
         except Exception as e:
+            print(
+                f"[debate] run_debate failed for phase '{phase_name}': {e}\n"
+                f"{traceback.format_exc()}",
+                file=sys.stderr,
+            )
             return DebateResult(
                 success=False,
                 phase_name=phase_name,
@@ -194,6 +201,13 @@ class DebateOrchestrator:
         self._store_session_id(phase_name, "primary", 1, t1_results.primary_result.session_id)
 
         # Step 2: Secondary feedback (single message)
+        if not primary_t1_file.exists() or primary_t1_file.stat().st_size == 0:
+            print(
+                f"[debate] Warning: primary output file missing or empty "
+                f"before feedback step: {primary_t1_file}",
+                file=sys.stderr,
+            )
+
         t2_results = self._run_feedback_turn_2(
             phase_name=phase_name,
             prompt_generator=prompt_generator,
@@ -291,6 +305,12 @@ class DebateOrchestrator:
             dangerous_mode=dangerous_mode,
             working_dir=self.context.get_working_dir(),
         )
+
+        if primary_result.is_error:
+            print(
+                f"[debate] Turn 1 primary error: output={primary_result.output[:300]!r}",
+                file=sys.stderr,
+            )
 
         return Turn1Results(
             primary_result=primary_result,
