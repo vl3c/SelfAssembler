@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -178,7 +179,9 @@ class ClaudeExecutor(AgentExecutor):
         elif permission_mode:
             cmd.extend(["--permission-mode", permission_mode])
 
-        if allowed_tools:
+        # Skip tool restrictions when SA_PERMISSION_MODE is set (Docker sandbox
+        # where the container provides isolation — all tools should be available)
+        if allowed_tools and not os.environ.get("SA_PERMISSION_MODE"):
             cmd.extend(["--allowedTools", ",".join(allowed_tools)])
 
         if self.model:
