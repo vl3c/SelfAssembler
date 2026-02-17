@@ -234,8 +234,8 @@ def get_command(
     Returns:
         The command to run, or None if not available
     """
-    if override:
-        return override
+    if override is not None:
+        return override if override else None  # Empty string = explicitly disabled
 
     project_type = detect_project_type(workdir)
     if not project_type:
